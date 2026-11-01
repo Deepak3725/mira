@@ -1,7 +1,8 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}{% if mode == "new" %}Create my twin{% else %}Edit my twin{% endif %} — {{ app_name }}{% endblock %}
 {% block content %}
-<section class="page-head">
+<section class="page-head narrow">
+  <p class="back"><a href="/me">&larr; My space</a></p>
   <h1>{% if mode == "new" %}Create my twin{% else %}Edit my twin{% endif %}</h1>
   <p class="lede">Tick the boxes for fields your twin may share. Unchecked fields stay private and are never sent anywhere.</p>
 </section>

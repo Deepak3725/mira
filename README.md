@@ -114,27 +114,34 @@ Browser → FastAPI (app/routes) → engine (conversations, matching, memories)
         → providers (mock default, meta optional) → budget guard → SQLite
 ```
 
-- DB access is plain SQL in `app/db.py` so a PostgreSQL move later is easy.
-- External adapters (Messenger/WhatsApp/etc.) are intentionally NOT built;
-  the engine exposes one twin-chat core they could plug into later.
+- DB access is plain SQL in `app/db.py` with a shared SQLite/PostgreSQL
+  abstraction; production runs on Neon Postgres via `DATABASE_URL`.
+- Messaging channels (Telegram/WhatsApp/Messenger/Instagram/Mock) exist
+  with drafts, confirmations, and a mock channel for offline demos; only
+  Mock delivery is verified end to end — vendor delivery needs a live
+  token and a real handshake test before any claim.
 
 ## Honest limitations
 
-- **Demo auth, not production auth**: PBKDF2 passwords + signed cookies are
-  correct primitives, but there is no email verification, password reset,
-  CSRF tokens (SameSite=Lax cookies only), session rotation (7-day TTL), or
-  brute-force lockout beyond simple in-memory rate limits (which reset on
-  restart and don't cover every endpoint). The four demo accounts use
-  published passwords — rotate or remove them before any shared deployment.
-  Do not run open public registration on the internet as-is.
-- **SQLite**: one writer at a time; fine for local demo and a small audience,
-  not for heavy concurrent use. Data lives in one `data/mira.db` file.
+- **Auth**: PBKDF2 passwords, HMAC-signed sessions (revoked on logout),
+  session-bound CSRF tokens, and per-IP rate limits are implemented and
+  tested. Still missing: email verification, password reset, and brute-force
+  lockout beyond in-memory rate limits (which reset on restart, are
+  per-process, and don't cover every endpoint). Demo accounts use published
+  passwords and are blocked in production unless `MIRA_DEMO_MODE=1` on an
+  isolated demo service. Do not run open public registration on the
+  internet as-is.
+- **Database**: SQLite locally (one writer; fine for demo), Neon Postgres
+  in production. Channel tokens are stored as plaintext JSON in the
+  database: acceptable only with strict database access control; encrypt
+  at rest before storing real vendor tokens.
 - **Mock brain**: template replies from authorized facts — good for demo
   structure, not real reasoning. Clearly labeled `mock` in the UI.
-- **Import**: one verified format (ChatGPT `conversations.json`) + a tiny
-  generic JSON shape. No live sync with any AI account, ever.
-- **Hosting**: local-first. Any free-tier hosting must be re-verified at
-  deploy time (limits change); nothing here assumes free hosting exists.
+- **Import**: ChatGPT/Claude/Gemini exports (JSON/ZIP, size-capped) plus a
+  tiny generic JSON shape. No live sync with any AI account, ever.
+- **Hosting**: Render Free + Neon Free blueprint in `render.yaml`;
+  re-verify free-tier limits at deploy time. Server binds and E2E browser
+  flows must be verified outside sandboxed runners.
 
 ## Project layout
 

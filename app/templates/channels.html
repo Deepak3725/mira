@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Channels - {{ app_name }}{% endblock %}
 {% block content %}
-<section class="page-head">
+<section class="page-head narrow">
   <h1>Messaging channels</h1>
   <p class="lede">Connect your own accounts. Tokens stay on the server and are never shown. Drafts always preview before sending; scheduled sends need confirmation unless you enable a pre-authorised policy per account.</p>
 </section>
@@ -31,14 +31,19 @@
 <section>
   <h2>Your accounts ({{ accounts | length }})</h2>
   {% if accounts %}
-  <ul class="plain-list">
+  <ul class="convo-list">
     {% for a in accounts %}
     <li><a href="/channels/{{ a.id }}">{{ a.label or a.channel }}</a>
-      <span class="lede">{{ a.channel }} - {{ a.status }}</span></li>
+      <span class="badge">{{ a.channel }}</span>
+      <span class="badge">{{ a.status }}</span></li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="lede">None yet.</p>
+  <div class="empty-state">
+    <img src="/static/img/empty-chat.svg" alt="" />
+    <h2>No connected accounts yet</h2>
+    <p>Connect an account above to start drafting messages.</p>
+  </div>
   {% endif %}
 </section>
 {% endblock %}

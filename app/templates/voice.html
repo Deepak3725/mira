@@ -1,19 +1,43 @@
 {% extends "base.html" %}
 {% block title %}{{ app_name }} — Voice{% endblock %}
 {% block content %}
-<h1>Talk to your twin</h1>
-<p>Speak into your microphone, or type below. Speech recognition
-and spoken replies run in your browser (Web Speech API): no audio
-is uploaded and voice itself is free. I confirm before sending
-anything.</p>
-<p class="muted">Notes: Chrome sends recognition audio to Google's
-servers for transcription. Half-finished voice requests are kept in
-memory and lost if the server restarts. This page needs
-JavaScript.</p>
+<section class="voice-hero">
+  <div>
+    <h1>Talk to your twin</h1>
+    <p class="lede">Speak into your microphone, or type below. Speech recognition
+    and spoken replies run in your browser (Web Speech API): no audio
+    is uploaded and voice itself is free. I confirm before sending
+    anything.</p>
+    <ol class="voice-flow" aria-label="How a voice session works">
+      <li>Press Start listening</li>
+      <li>Take turns with your twin</li>
+      <li>Press End session when done</li>
+    </ol>
+  </div>
+  <img class="voice-mascot" src="/static/img/robot.svg" alt="Friendly robot ready to listen" />
+</section>
 <noscript><p><strong>Voice needs JavaScript.</strong> Use chats or
 channels instead.</p></noscript>
+<div class="voice-cards" role="group" aria-label="Voice shortcuts">
+  <button class="voice-card" type="button" data-say="create my twin">
+    <span class="voice-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#007F7B" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg></span>
+    <strong>Create my twin</strong>
+    <span>Start the twin setup flow, guided by voice or text.</span>
+  </button>
+  <button class="voice-card" type="button" data-say="talk to my twin">
+    <span class="voice-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#007F7B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
+    <strong>Talk to my twin</strong>
+    <span>Start a session: take turns, then end the session.</span>
+  </button>
+  <button class="voice-card" type="button" data-say="update my twin">
+    <span class="voice-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#007F7B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13.5 7.5l3 3"/></svg></span>
+    <strong>Update my twin</strong>
+    <span>Teach or update your twin through conversation.</span>
+  </button>
+</div>
 <div class="voice-controls">
   <button id="mic" type="button">Start listening</button>
+  <button id="end-session" class="button secondary small" type="button">End session</button>
   <label><input id="speak" type="checkbox" checked /> Speak replies aloud</label>
   <label for="provider">Provider</label>
   <select id="provider">
@@ -32,10 +56,16 @@ channels instead.</p></noscript>
 <div id="voice-log" class="voice-log" aria-live="polite"></div>
 <div class="voice-typed">
   <label for="typed">No microphone? Type here:</label>
-  <input id="typed" type="text" maxlength="4000"
-         placeholder="Ask a question or say 'help'" />
-  <button id="send-typed" type="button">Send</button>
+  <div class="row">
+    <input id="typed" type="text" maxlength="4000"
+           placeholder="Ask a question or say 'help'" />
+    <button id="send-typed" class="button" type="button">Send</button>
+  </div>
 </div>
+<p class="privacy-note">Notes: Chrome sends recognition audio to Google's
+servers for transcription. Half-finished voice requests are kept in
+memory and lost if the server restarts. This page needs
+JavaScript.</p>
 <script>
 const CSRF_TOKEN = {{ csrf_token | tojson }};
 const log = document.getElementById("voice-log");
@@ -43,11 +73,12 @@ const micBtn = document.getElementById("mic");
 const speakBox = document.getElementById("speak");
 const providerSel = document.getElementById("provider");
 const typed = document.getElementById("typed");
+let activeRec = null;
 
 function addLine(who, text) {
   const p = document.createElement("p");
-  p.className = who === "you" ? "voice-you" : "voice-twin";
-  p.textContent = (who === "you" ? "You: " : "Twin: ") + text;
+  p.className = who === "you" ? "voice-you" : (who === "sys" ? "voice-sys" : "voice-twin");
+  p.textContent = (who === "you" ? "You: " : (who === "sys" ? "" : "Twin: ")) + text;
   log.appendChild(p);
   log.scrollTop = log.scrollHeight;
 }
@@ -93,6 +124,14 @@ typed.addEventListener("keydown", (event) => {
     document.getElementById("send-typed").click();
   }
 });
+document.getElementById("end-session").addEventListener("click", () => {
+  if (activeRec) {
+    try { activeRec.stop(); } catch (err) { /* already stopped */ }
+  }
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  micBtn.textContent = "Start listening";
+  addLine("sys", "Session ended. Start listening or type above whenever you're ready.");
+});
 
 const Recognizer = window.SpeechRecognition ||
   window.webkitSpeechRecognition;
@@ -101,6 +140,7 @@ if (!Recognizer) {
   micBtn.textContent = "Voice recognition not supported here";
 } else {
   const rec = new Recognizer();
+  activeRec = rec;
   rec.interimResults = false;
   rec.onresult = (event) => {
     const text = event.results[0][0].transcript || "";

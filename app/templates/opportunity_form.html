@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Post an opportunity - {{ app_name }}{% endblock %}
 {% block content %}
-<section class="page-head">
+<section class="page-head narrow">
+  <p class="back"><a href="/discover">&larr; Discover</a></p>
   <h1>Post an opportunity</h1>
   <p class="lede">Twins looking for work will be matched against it. You approve every contact.</p>
 </section>
@@ -22,7 +23,7 @@
     <label>Required skills (comma-separated) <input type="text" name="skills" maxlength="600" /></label>
     <label>Preferred years of experience <input type="text" name="years" maxlength="4" /></label>
     <label>Location <input type="text" name="location" maxlength="120" /></label>
-    <label><input type="checkbox" name="remote_ok" value="yes" /> Remote OK</label>
+    <label class="check"><input type="checkbox" name="remote_ok" value="yes" /> Remote OK</label>
     <button class="button" type="submit">Post opportunity</button>
   </form>
 </section>

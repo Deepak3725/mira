@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}My space — {{ app_name }}{% endblock %}
 {% block content %}
 <section class="page-head">
@@ -8,10 +8,10 @@
 <section>
   <h2>My twin journey</h2>
   <ol class="journey">
-    <li>{% if twin %}✓ {% endif %}<strong>Create</strong> — {% if twin %}<a href="/twin/edit">twin "{{ twin.display_name }}" ready</a>{% else %}<a href="/twin/new">create your twin</a>{% endif %}</li>
-    <li>{% if approved_memories %}✓ {% endif %}<strong>Teach</strong> — <a href="/memories">{% if approved_memories %}{{ approved_memories }} approved memories{% else %}import knowledge for review{% endif %}</a></li>
+    <li class="{% if twin %}done{% endif %}"><strong>Create</strong> — {% if twin %}<a href="/twin/edit">twin "{{ twin.display_name }}" ready</a>{% else %}<a href="/twin/new">create your twin</a>{% endif %}</li>
+    <li class="{% if approved_memories %}done{% endif %}"><strong>Teach</strong> — <a href="/memories">{% if approved_memories %}{{ approved_memories }} approved memories{% else %}import knowledge for review{% endif %}</a></li>
     <li><strong>Talk</strong> — <a href="/voice">talk to your twin by voice or text</a></li>
-    <li>{% if convos %}✓ {% endif %}<strong>Test</strong> — <a href="/discover">discover matches</a> and start a twin chat</li>
+    <li class="{% if convos %}done{% endif %}"><strong>Test</strong> — <a href="/discover">discover matches</a> and start a twin chat</li>
     <li><strong>Activate</strong> — list your twin publicly from <a href="/twin/edit">twin settings</a> and let it represent you</li>
     <li><strong>Control</strong> — set <a href="/twin/edit">conditions</a>, pause any <a href="/conversations">chat</a>, and record every decision yourself</li>
   </ol>
@@ -22,7 +22,7 @@
     {% if twin %}
     <p><strong>{{ twin.display_name }}</strong> — {{ twin.tone }}</p>
     <p class="lede">{{ twin.persona }}</p>
-    <p>
+    <p class="controls">
       <a class="button" href="/twin/edit">Edit twin</a>
       <a class="button secondary" href="/memories">Memories</a>
       <a class="button secondary" href="/voice">Voice</a>
@@ -36,7 +36,7 @@
   <div class="me-card">
     <h2>My conversations</h2>
     {% if convos %}
-    <ul class="plain-list">
+    <ul class="convo-list">
       {% for c in convos %}
       <li><a href="/conversations/{{ c.id }}">{{ c.name_a }} ↔ {{ c.name_b }}</a>
         <span class="badge">{{ c.status }}</span>
@@ -51,4 +51,5 @@
   </div>
 </section>
 <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Log out</button></form>
+<img class="mountain-band" src="/static/img/mountains.svg" alt="" aria-hidden="true" />
 {% endblock %}

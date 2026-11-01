@@ -4,25 +4,28 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}{{ app_name }} — Personal AI Twin Network{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg" />
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="/">{{ app_name }}</a>
+      <input class="nav-toggle" type="checkbox" id="nav-toggle" aria-label="Toggle navigation" />
+      <label class="nav-button" for="nav-toggle" aria-hidden="true">Menu</label>
       <nav class="site-nav" aria-label="Site">
-        <a href="/dashboard">Twins</a>
-        <a href="/discover">Discover</a>
-        <a href="/requests">Requests</a>
-        <a href="/conversations">Chats</a>
+        {% set cur = request.url.path %}
+        <a href="/dashboard" class="{% if cur == '/dashboard' %}active{% endif %}">Twins</a>
+        <a href="/discover" class="{% if cur.startswith('/discover') or cur.startswith('/opportunities') %}active{% endif %}">Discover</a>
+        <a href="/requests" class="{% if cur.startswith('/requests') %}active{% endif %}">Requests</a>
+        <a href="/conversations" class="{% if cur.startswith('/conversations') %}active{% endif %}">Chats</a>
         {% if me %}
-        <a href="/voice">Voice</a>
-        <a href="/me">{{ me.name }}</a>
+        <a href="/voice" class="{% if cur.startswith('/voice') %}active{% endif %}">Voice</a>
+        <a class="user-chip {% if cur in ('/me',) or cur.startswith('/twin') or cur.startswith('/memories') or cur.startswith('/usage') %}active{% endif %}" href="/me">{{ me.name }}</a>
         {% else %}
-        <a href="/register">Create your twin</a>
-        <a href="/login">Log in</a>
+        <a href="/register" class="{% if cur == '/register' %}active{% endif %}">Create your twin</a>
+        <a href="/login" class="{% if cur == '/login' %}active{% endif %}">Log in</a>
         {% endif %}
-        <a href="/healthz">Health</a>
       </nav>
     </div>
   </header>
@@ -32,6 +35,12 @@
   <footer class="site-footer">
     <div class="container">
       <p>{{ app_name }} · Personal AI twin network · Humans stay in control.</p>
+      <nav aria-label="Footer">
+        <a href="/dashboard">Twins</a>
+        <a href="/discover">Discover</a>
+        <a href="/conversations">Chats</a>
+        {% if me %}<a href="/me">My space</a>{% else %}<a href="/login">Log in</a>{% endif %}
+      </nav>
     </div>
   </footer>
 </body>

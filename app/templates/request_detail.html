@@ -1,8 +1,8 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Request — {{ app_name }}{% endblock %}
 {% block content %}
-<section class="page-head">
-  <p class="back"><a href="/requests">&larr; My requests</a></p>
+<section class="page-head narrow">
+  <p class="back"><a href="/requests">&larr; Requests</a></p>
   <h1>{{ req.twin_name }} is on it</h1>
   <p class="opp-meta">
     <span class="badge">{{ req.category }}</span>
@@ -43,13 +43,17 @@
     {% endfor %}
   </div>
   {% else %}
-  <p class="lede">No matching providers right now. Try widening your requirements.</p>
+  <div class="empty-state">
+    <img src="/static/img/empty-search.svg" alt="" />
+    <h2>No matching providers right now</h2>
+    <p>Try widening your requirements.</p>
+  </div>
   {% endif %}
 </section>
 {% if chats %}
 <section>
   <h2>Chats for this request</h2>
-  <ul class="plain-list">
+  <ul class="convo-list">
     {% for c in chats %}
     <li><a href="/conversations/{{ c.id }}">{{ c.name_a }} ↔ {{ c.name_b }}</a>
       <span class="badge">{{ c.status }}</span>

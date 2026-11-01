@@ -10,7 +10,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .db import create_twin, create_user, get_user_by_email, init_db
+from .db import (
+    create_twin,
+    create_user,
+    get_twin_by_user,
+    get_user_by_email,
+    init_db,
+)
 
 SEED_USERS: list[dict] = [
     {
@@ -159,6 +165,18 @@ def seed_demo_data(path: Path | str | None = None) -> dict[str, int]:
             if existing is not None:
                 if not existing["password_hash"]:
                     set_user_password(conn, existing["id"], hash_password(entry["password"]))
+                if get_twin_by_user(conn, existing["id"]) is None:
+                    twin = entry["twin"]
+                    create_twin(
+                        conn,
+                        user_id=existing["id"],
+                        display_name=twin["display_name"],
+                        persona=twin["persona"],
+                        tone=twin["tone"],
+                        profile=twin["profile"],
+                        authorized_fields=twin["authorized_fields"],
+                        avatar_seed=twin["avatar_seed"],
+                    )
                 skipped += 1
                 continue
             user_id = create_user(
@@ -466,10 +484,103 @@ def seed_demo_conversation(path: Path | str | None = None) -> dict[str, int]:
         conn.close()
 
 
+DEMO_MEMORIES: list[dict] = [
+    # Dee — junior backend developer looking for a full-time role.
+    {"email": "deepak.demo@example.com", "status": "approved",
+     "category": "skill",
+     "content": ("Built REST APIs with Python and FastAPI for three years, "
+                 "including auth and clean versioning.")},
+    {"email": "deepak.demo@example.com", "status": "approved",
+     "category": "experience",
+     "content": ("Shipped an internal dashboard backed by SQLite that the "
+                 "support team still uses daily.")},
+    {"email": "deepak.demo@example.com", "status": "approved",
+     "category": "preference",
+     "content": "Prefers hybrid roles in Thimphu; open to remote for the right team."},
+    {"email": "deepak.demo@example.com", "status": "approved",
+     "category": "project",
+     "content": "Portfolio project: a small job-board API with tests and docs."},
+    {"email": "deepak.demo@example.com", "status": "pending",
+     "category": "skill",
+     "content": "Currently learning basic Docker to containerize personal projects."},
+    # Kay — hiring lead for a fictional studio.
+    {"email": "karma.demo@example.com", "status": "approved",
+     "category": "preference",
+     "content": ("Hiring bar: 2+ years of Python, working REST APIs, and clear "
+                 "communication; culture fit matters.")},
+    {"email": "karma.demo@example.com", "status": "approved",
+     "category": "experience",
+     "content": "Druk Analytics is a fictional ten-person studio; backend team of three."},
+    {"email": "karma.demo@example.com", "status": "approved",
+     "category": "general",
+     "content": ("Interview process: twin-chat screening first, then one human "
+                 "conversation before any offer.")},
+    # Pem — product designer open to collaborations.
+    {"email": "pema.demo@example.com", "status": "approved",
+     "category": "skill",
+     "content": ("Product designer: Figma design systems, prototyping, and user "
+                 "research for four years.")},
+    {"email": "pema.demo@example.com", "status": "approved",
+     "category": "project",
+     "content": ("Led a component-library redesign used across three fictional "
+                 "client apps.")},
+    {"email": "pema.demo@example.com", "status": "approved",
+     "category": "preference",
+     "content": "Open to collaborations; prefers remote-friendly teams."},
+    # Tash — independent DevOps specialist.
+    {"email": "tashi.demo@example.com", "status": "approved",
+     "category": "skill",
+     "content": ("DevOps specialist: Docker, CI/CD pipelines, Linux servers, "
+                 "and monitoring for five years.")},
+    {"email": "tashi.demo@example.com", "status": "approved",
+     "category": "experience",
+     "content": ("Set up zero-downtime deploys for fictional clients; "
+                 "on-call friendly.")},
+    {"email": "tashi.demo@example.com", "status": "approved",
+     "category": "preference",
+     "content": "Takes short infrastructure gigs; two project slots currently open."},
+]
+
+
+def seed_demo_memories(path: Path | str | None = None) -> dict[str, int]:
+    """Insert fictional twin memories if missing. Returns counts created/skipped.
+
+    Approved entries stand in for owner-approved knowledge for these
+    fictional demo accounts; one pending entry per demo flow is kept so
+    the review queue stays demonstrable.
+    """
+    from .db import get_connection
+    from .memories import create_memory
+
+    # NOTE: callers must init_db() first; seeding never wipes (Postgres
+    # test init drops the schema, so an init here would erase prior seeds).
+    conn = get_connection(path)
+    created = skipped = 0
+    try:
+        for entry in DEMO_MEMORIES:
+            owner = get_user_by_email(conn, entry["email"])
+            twin = get_twin_by_user(conn, owner["id"]) if owner else None
+            if twin is None:
+                continue
+            mem_id = create_memory(
+                conn, twin_id=twin["id"], content=entry["content"],
+                source="demo-seed", status=entry["status"],
+                category=entry["category"])
+            if mem_id is None:
+                skipped += 1
+            else:
+                created += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"created": created, "skipped": skipped}
+
+
 def refuse_in_production() -> None:
     from .config import settings as _settings
 
-    if _settings.app_env == "production":
+    demo_on = getattr(_settings, "demo_mode", False) is True
+    if _settings.app_env == "production" and not demo_on:
         raise SystemExit("Refusing to seed demo data in production.")
 
 
@@ -479,8 +590,10 @@ if __name__ == "__main__":
     users = seed_demo_data()
     opps = seed_demo_opportunities()
     drivers = seed_demo_drivers()
+    mems = seed_demo_memories()
     demo = seed_demo_conversation()
     print(f"seeded demo users: {users['created']} created, {users['skipped']} skipped")
     print(f"seeded opportunities: {opps['created']} created, {opps['skipped']} skipped")
     print(f"seeded drivers: {drivers['created']} created, {drivers['skipped']} skipped")
+    print(f"seeded memories: {mems['created']} created, {mems['skipped']} skipped")
     print(f"seeded demo chat: {demo['created']} created, {demo['skipped']} skipped")

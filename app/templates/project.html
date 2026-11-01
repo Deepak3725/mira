@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{{ project.title }} - {{ app_name }}{% endblock %}
 {% block content %}
-<section class="page-head">
+<section class="page-head narrow">
+  <p class="back"><a href="/projects">&larr; Projects</a></p>
   <h1>{{ project.title }}</h1>
-  <p class="lede">{{ project.status }} - {{ project.goal }}</p>
+  <p class="opp-meta"><span class="badge">{{ project.status }}</span><span>{{ project.goal }}</span></p>
 </section>
 {% if notice %}<p class="form-note" role="status">{{ notice }}</p>{% endif %}
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
@@ -26,8 +27,8 @@
   {% if tasks %}
   <ul class="plain-list">
     {% for t in tasks %}
-    <li>
-      <p><strong>#{{ t.id }} {{ t.title }}</strong> [{{ t.kind }}] {{ t.status }}{% if t.provider %} via {{ t.provider }}/{{ t.model }}{% endif %}{% if t.needs_approval %} (needs approval){% endif %}</p>
+    <li class="task-card">
+      <p><strong>#{{ t.id }} {{ t.title }}</strong> <span class="badge">{{ t.kind }}</span> <span class="badge">{{ t.status }}</span>{% if t.provider %} <span class="lede">via {{ t.provider }}/{{ t.model }}</span>{% endif %}{% if t.needs_approval %} <span class="badge pending">needs approval</span>{% endif %}</p>
       {% if t.error %}<p class="lede">error: {{ t.error }}</p>{% endif %}
       <div class="controls">
         {% if t.needs_approval or t.status == "needs_review" %}
@@ -68,22 +69,24 @@
 <section>
   <h2>Files ({{ files | length }})</h2>
   {% if files %}
-  <ul class="plain-list">{% for f in files %}<li><code>{{ f.path }}</code> v{{ f.version }} <span class="lede">by {{ f.updated_by }}</span></li>{% endfor %}</ul>
+  <ul class="convo-list">{% for f in files %}<li><code>{{ f.path }}</code> <span class="badge">v{{ f.version }}</span> <span class="lede">by {{ f.updated_by }}</span></li>{% endfor %}</ul>
   {% else %}
   <p class="lede">No files yet.</p>
   {% endif %}
-  <form method="post" action="/projects/{{ project.id }}/files"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <label>Path <input type="text" name="path" maxlength="200" placeholder="index.html" required /></label>
-    <label>Content <input type="text" name="content" maxlength="200000" /></label>
-    <button class="button secondary" type="submit">Save new version</button>
-  </form>
+  <div class="me-card">
+    <form method="post" action="/projects/{{ project.id }}/files"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label>Path <input type="text" name="path" maxlength="200" placeholder="index.html" required /></label>
+      <label>Content <input type="text" name="content" maxlength="200000" /></label>
+      <button class="button secondary" type="submit">Save new version</button>
+    </form>
+  </div>
 </section>
 <section class="me-card">
   <h2>Run checks</h2>
   <p class="lede">Approval-gated: runs only allowlisted interpreters (python, pytest, node) in a temp jail with scrubbed secrets and a 60s timeout. Container isolation is not available on this machine.</p>
   <form method="post" action="/projects/{{ project.id }}/checks"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <label>Command <input type="text" name="command" maxlength="500" placeholder="python -m pytest" required /></label>
-    <label><input type="checkbox" name="confirm" value="yes" /> I approve running this command</label>
+    <label class="check"><input type="checkbox" name="confirm" value="yes" /> I approve running this command</label>
     <button class="button" type="submit">Run checks</button>
   </form>
 </section>
@@ -98,7 +101,7 @@
 <section>
   <h2>History</h2>
   {% if events %}
-  <ul class="plain-list">{% for e in events %}<li><code>{{ e.action }}</code> {{ e.actor }} {{ e.detail[:120] }}</li>{% endfor %}</ul>
+  <ul class="plain-list audit">{% for e in events %}<li><code>{{ e.action }}</code> {{ e.actor }} {{ e.detail[:120] }}</li>{% endfor %}</ul>
   {% else %}
   <p class="lede">No events yet.</p>
   {% endif %}

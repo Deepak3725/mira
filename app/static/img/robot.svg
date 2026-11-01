@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 130" role="img" aria-label="Friendly MIRA robot mascot">
+  <line x1="60" y1="22" x2="60" y2="10" stroke="#007F7B" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="60" cy="8" r="5" fill="#009F9A"/>
+  <circle cx="58.5" cy="6.5" r="1.5" fill="#fff" opacity="0.85"/>
+  <rect x="28" y="22" width="64" height="46" rx="16" fill="#009F9A"/>
+  <rect x="36" y="30" width="48" height="30" rx="10" fill="#E8FAF7"/>
+  <circle cx="50" cy="45" r="5" fill="#14233D"/>
+  <circle cx="70" cy="45" r="5" fill="#14233D"/>
+  <circle cx="51.5" cy="43.5" r="1.6" fill="#fff"/>
+  <circle cx="71.5" cy="43.5" r="1.6" fill="#fff"/>
+  <path d="M52 78 Q60 84 68 78" fill="none" stroke="#007F7B" stroke-width="3" stroke-linecap="round"/>
+  <rect x="42" y="72" width="36" height="30" rx="9" fill="#B9EFEC"/>
+  <rect x="52" y="79" width="16" height="12" rx="4" fill="#fff" opacity="0.9"/>
+  <circle cx="60" cy="85" r="3" fill="#009F9A"/>
+  <rect x="22" y="74" width="10" height="22" rx="5" fill="#007F7B"/>
+  <rect x="88" y="74" width="10" height="22" rx="5" fill="#007F7B"/>
+  <ellipse cx="48" cy="112" rx="10" ry="5" fill="#007F7B" opacity="0.5"/>
+  <ellipse cx="72" cy="112" rx="10" ry="5" fill="#007F7B" opacity="0.5"/>
+  <circle cx="30" cy="52" r="4" fill="#F9A8D4" opacity="0.8"/>
+  <circle cx="90" cy="52" r="4" fill="#F9A8D4" opacity="0.8"/>
+</svg>

@@ -23,6 +23,7 @@ from ..db import (
     get_connection,
     get_opportunity,
     get_twin_by_user,
+    list_requests_for_user,
 )
 from ..intent import interpret_need
 from ..matching import find_providers
@@ -53,7 +54,7 @@ def request_list(request: Request):
         return redir
     conn = get_connection()
     try:
-        rows = need_engine.list_requests_for_user(conn, me["id"])
+        rows = list_requests_for_user(conn, me["id"])
         items = [
             {"id": r["id"], "category": r["category"], "status": r["status"],
              "need_text": (r["need_text"] or "")[:120],

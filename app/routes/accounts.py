@@ -186,8 +186,10 @@ def login(request: Request, email: str = Form(""), password: str = Form(""),
         return _form_error(request, "login.html", "Too many attempts. Try again later.")
     if len(password) > auth.MAX_PASSWORD_LENGTH:
         return _form_error(request, "login.html", "Invalid email or password.")
-    if settings.app_env == "production" and _clean(email, 120).lower().endswith("@example.com"):
-        # Published demo credentials must never work on the public site.
+    if (settings.app_env == "production" and not settings.demo_mode
+            and _clean(email, 120).lower().endswith("@example.com")):
+        # Published demo credentials must never work on the public site,
+        # unless this deployment is explicitly a demo environment.
         return _form_error(request, "login.html", "Invalid email or password.")
     conn = get_connection()
     try:

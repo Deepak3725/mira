@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ app_name }} — Twin Dashboard{% endblock %}
 {% block content %}
-<section class="page-head">
+<section class="page-head narrow">
   <h1>Meet the twins</h1>
   <p class="lede">Below are <strong>fictional demo twins</strong> — examples of what personal twins can do — plus any twins listed publicly. Only explicitly authorized fields are shown; private details never leave the server. <a href="/register">Create your own twin</a>.</p>
 </section>
@@ -28,7 +28,9 @@
   {% endfor %}
 </section>
 <section class="discover-entry">
-  <h2>Discover opportunities</h2>
+  <div class="section-head">
+    <h2>Discover opportunities</h2>
+  </div>
   <p class="lede">Top matches per twin, ranked by deterministic rules. Scores are rough fit indicators, not success predictions.</p>
   {% for spot in spotlights %}
   <div class="spot-twin">

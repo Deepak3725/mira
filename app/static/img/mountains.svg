@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 180" role="img" aria-label="Soft mint mountain landscape" preserveAspectRatio="xMidYMax slice">
+  <circle cx="1000" cy="48" r="30" fill="#B9EFEC" opacity="0.7"/>
+  <path d="M0 150 L180 60 L340 150 Z" fill="#B9EFEC" opacity="0.55"/>
+  <path d="M150 96 L180 60 L210 96 L195 96 L180 78 L165 96 Z" fill="#fff" opacity="0.9"/>
+  <path d="M260 150 L470 30 L680 150 Z" fill="#009F9A" opacity="0.28"/>
+  <path d="M428 66 L470 30 L512 66 L494 66 L470 42 L446 66 Z" fill="#fff" opacity="0.9"/>
+  <path d="M560 150 L760 70 L960 150 Z" fill="#B9EFEC" opacity="0.7"/>
+  <path d="M730 100 L760 70 L790 100 L776 100 L760 84 L744 100 Z" fill="#fff" opacity="0.9"/>
+  <path d="M860 150 L1050 50 L1200 130 L1200 150 Z" fill="#009F9A" opacity="0.22"/>
+  <rect x="0" y="150" width="1200" height="30" fill="#E8FAF7"/>
+</svg>

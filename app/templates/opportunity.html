@@ -1,7 +1,7 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}{{ opp.title }} — {{ app_name }}{% endblock %}
 {% block content %}
-<section class="page-head">
+<section class="page-head narrow">
   <p class="back"><a href="/discover{% if selected %}?twin_id={{ selected.id }}{% endif %}">&larr; Back to discovery</a></p>
   <h1>{{ opp.title }}</h1>
   <p class="opp-meta">

@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ app_name }} — Discover Opportunities{% endblock %}
 {% block content %}
-<section class="page-head">
-  <h1>Discover opportunities</h1>
-  <p class="lede">Browse as any twin and see deterministically ranked matches. Scores are rough fit indicators, not success predictions.</p>
-  <p><a class="button secondary" href="/opportunities/new">Post an opportunity</a></p>
+<section class="discover-hero">
+  <div>
+    <h1>Discover opportunities</h1>
+    <p class="lede">Browse as any twin and see deterministically ranked matches. Scores are rough fit indicators, not success predictions.</p>
+    <p><a class="button secondary" href="/opportunities/new">Post an opportunity</a></p>
+  </div>
+  <img src="/static/img/globe.svg" alt="Globe illustration showing opportunities around the world" />
 </section>
 <form class="discover-form" method="get" action="/discover">
   <label>
@@ -25,7 +28,7 @@
   </label>
   <button class="button" type="submit">Search</button>
 </form>
-<section class="opp-list">
+<section class="opp-list" aria-live="polite">
   {% if matches %}
     {% for item in matches %}
     <article class="opp-card">
@@ -52,7 +55,13 @@
     </article>
     {% endfor %}
   {% else %}
-    <p class="lede">No open opportunities match these filters.</p>
+    <div class="empty-state">
+      <img src="/static/img/empty-search.svg" alt="" />
+      <h2>No open opportunities match these filters</h2>
+      <p>Try widening the skills or location, browse as a different twin, or post the opportunity yourself.</p>
+      <p><a class="button secondary" href="/opportunities/new">Post an opportunity</a></p>
+    </div>
   {% endif %}
 </section>
+<img class="mountain-band" src="/static/img/mountains.svg" alt="" aria-hidden="true" />
 {% endblock %}

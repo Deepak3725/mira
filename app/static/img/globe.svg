@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 190" role="img" aria-label="Globe with an opportunity marker">
+  <circle cx="105" cy="95" r="62" fill="#E8FAF7" stroke="#009F9A" stroke-width="5"/>
+  <ellipse cx="105" cy="95" rx="26" ry="62" fill="none" stroke="#B9EFEC" stroke-width="4"/>
+  <line x1="43" y1="95" x2="167" y2="95" stroke="#B9EFEC" stroke-width="4"/>
+  <path d="M52 62 Q105 82 158 62" fill="none" stroke="#B9EFEC" stroke-width="4"/>
+  <path d="M52 128 Q105 108 158 128" fill="none" stroke="#B9EFEC" stroke-width="4"/>
+  <path d="M150 30 c-12 0 -21 9 -21 21 0 15 21 34 21 34 s21 -19 21 -34 c0 -12 -9 -21 -21 -21 z" fill="#009F9A"/>
+  <circle cx="150" cy="51" r="8" fill="#fff"/>
+  <circle cx="40" cy="30" r="4" fill="#B9EFEC"/>
+  <circle cx="185" cy="140" r="5" fill="#B9EFEC"/>
+  <circle cx="30" cy="150" r="3" fill="#B9EFEC"/>
+  <path d="M20 175 L70 150 L120 175 L170 150 L210 175" fill="none" stroke="#B9EFEC" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

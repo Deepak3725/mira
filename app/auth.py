@@ -26,6 +26,9 @@ _PBKDF2_ITERATIONS = 200_000
 MAX_PASSWORD_LENGTH = 128
 
 _rate_buckets: dict[str, list[float]] = {}
+#: Upper bound on tracked limiter keys. Stale keys are evicted past this
+#: point so a flood of distinct keys cannot grow memory without limit.
+RATE_BUCKET_CAP = 10000
 
 
 def hash_password(password: str) -> str:
@@ -169,6 +172,16 @@ def session_revoked(conn, session_value: str) -> bool:
     return row is not None
 
 
+def _evict_rate_buckets(now: float) -> None:
+    """Drop expired keys; if still over cap, drop the oldest half."""
+    for known in [k for k, stamps in _rate_buckets.items()
+                  if not any(t > now - 3600 for t in stamps)]:
+        del _rate_buckets[known]
+    if len(_rate_buckets) > RATE_BUCKET_CAP:
+        for known in list(_rate_buckets)[:len(_rate_buckets) // 2]:
+            del _rate_buckets[known]
+
+
 def check_rate_limit(key: str, limit: int, window_seconds: int) -> bool:
     """Sliding-window limiter. Returns True if the call is allowed."""
     now = time.monotonic()
@@ -178,6 +191,8 @@ def check_rate_limit(key: str, limit: int, window_seconds: int) -> bool:
         return False
     bucket.append(now)
     _rate_buckets[key] = bucket
+    if len(_rate_buckets) > RATE_BUCKET_CAP:
+        _evict_rate_buckets(now)
     return True
 
 

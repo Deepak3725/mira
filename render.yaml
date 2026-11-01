@@ -40,3 +40,5 @@ services:
         value: ""
       - key: AI_ROUTES
         value: ""
+      - key: MIRA_DEMO_MODE
+        value: "" # Keep empty (off). Set to 1 ONLY on an isolated demo service with a demo database.

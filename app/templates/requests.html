@@ -1,24 +1,32 @@
 {% extends "base.html" %}
-{% block title %}My requests — {{ app_name }}{% endblock %}
+{% block title %}Requests — {{ app_name }}{% endblock %}
 {% block content %}
-<section class="page-head">
-  <h1>My requests</h1>
-  <p class="lede">Needs your twin is working on. Only you can see this page.</p>
+<section class="page-head narrow">
+  <h1>Requests</h1>
+  <p class="lede">View and manage requests involving your twin. Needs your twin is working on. Only you can see this page.</p>
   <p><a class="button" href="/requests/new">New request</a></p>
 </section>
 <section>
   {% if items %}
-  <ul class="plain-list">
+  <ul class="request-list">
     {% for r in items %}
-    <li><a href="/requests/{{ r.id }}">{{ r.need_text or "(empty)" }}</a>
-      <span class="badge">{{ r.category }}</span>
-      <span class="badge">{{ r.status }}</span>
-      <span class="lede">· {{ r.twin_name }}</span>
+    <li class="request-card">
+      <h2><a href="/requests/{{ r.id }}">{{ r.need_text or "(empty)" }}</a></h2>
+      <p class="request-meta">
+        <span class="badge">{{ r.category }}</span>
+        <span class="badge">{{ r.status }}</span>
+        <span>· {{ r.twin_name }}</span>
+      </p>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="lede">No requests yet. Describe a need and let your twin find providers.</p>
+  <div class="empty-state">
+    <img src="/static/img/empty-requests.svg" alt="Empty inbox illustration" />
+    <h2>No requests yet</h2>
+    <p>New requests involving your twin will appear here. Describe a need and let your twin find providers.</p>
+    <p><a class="button" href="/requests/new">New request</a></p>
+  </div>
   {% endif %}
 </section>
 {% endblock %}

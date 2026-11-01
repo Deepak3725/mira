@@ -30,6 +30,13 @@ def _load_dotenv(path: Path) -> None:
             os.environ[key] = value
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _int_env(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, str(default)))
@@ -78,6 +85,10 @@ class Settings:
     budget_monthly_usd: float = 75.0
     budget_per_conversation_usd: float = 1.0
     budget_per_user_daily_usd: float = 5.0
+    # Demo mode (MIRA_DEMO_MODE=1): allow demo seeding and documented demo
+    # credentials. Off by default everywhere; enable only on an isolated
+    # demo/development database, never on a production user database.
+    demo_mode: bool = False
 
 
 def get_settings() -> Settings:
@@ -103,6 +114,7 @@ def get_settings() -> Settings:
         budget_monthly_usd=_float_env("BUDGET_MONTHLY_USD", 75.0),
         budget_per_conversation_usd=_float_env("BUDGET_PER_CONVERSATION_USD", 1.0),
         budget_per_user_daily_usd=_float_env("BUDGET_PER_USER_DAILY_USD", 5.0),
+        demo_mode=_bool_env("MIRA_DEMO_MODE", False),
     )
 
 

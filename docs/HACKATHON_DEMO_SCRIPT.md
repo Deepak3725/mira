@@ -1,5 +1,9 @@
 # MIRA — Hackathon Demo Script (3–4 minutes)
 
+> SUPERSEDED by [DEMO_PLAYBOOK.md](DEMO_PLAYBOOK.md), verified against
+> the final code on 2026-11-01 (427/427 unit tests, seeded demo data).
+> Kept for history; do not rehearse from this file.
+
 Status of this script: drafted from source-code inspection on 2026-11-01
 **while feature development is still running**. Scenes marked
 **[PENDING FINAL VERIFICATION]** depend on code the other task is
