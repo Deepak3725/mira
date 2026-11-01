@@ -1,0 +1,64 @@
+﻿{% extends "base.html" %}
+{% block title %}Request — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="back"><a href="/requests">&larr; My requests</a></p>
+  <h1>{{ req.twin_name }} is on it</h1>
+  <p class="opp-meta">
+    <span class="badge">{{ req.category }}</span>
+    <span class="badge">{{ req.status }}</span>
+  </p>
+  <blockquote class="need-quote">{{ req.need_text }}</blockquote>
+  {% if req.requirements %}
+  <ul class="skill-chips">
+    {% for key, value in req.requirements.items() %}
+    <li>{{ key }}: {% if value is string or value is number %}{{ value }}{% else %}{{ value | join(', ') }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+<section>
+  <h2>Shortlist</h2>
+  <p class="lede">Ranked by deterministic rules (price 40, coverage 30, availability 15, tags 15). Your budget ceiling is never shared with providers.</p>
+  {% if shortlist %}
+  <div class="opp-list">
+    {% for item in shortlist %}
+    <article class="opp-card">
+      <div class="twin-avatar small" aria-hidden="true">{{ item.owner_svg | safe }}</div>
+      <div class="opp-info">
+        <h2>{{ item.offering.title }}</h2>
+        <p class="opp-meta">
+          <span class="badge">{{ item.offering.category or item.offering.kind }}</span>
+          <span class="score">Match {{ item.match.score }}/100</span>
+          <span>by {{ item.owner.twin_display_name }} ({{ item.owner.name }})</span>
+        </p>
+        <p>{{ item.offering.description }}</p>
+        <p class="lede">{{ item.match.explanation }}</p>
+        <form method="post" action="/requests/{{ req.id }}/contact"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <input type="hidden" name="offering_id" value="{{ item.offering.id }}" />
+          <button class="button" type="submit">Have {{ req.twin_name }} contact {{ item.owner.twin_display_name }}</button>
+        </form>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="lede">No matching providers right now. Try widening your requirements.</p>
+  {% endif %}
+</section>
+{% if chats %}
+<section>
+  <h2>Chats for this request</h2>
+  <ul class="plain-list">
+    {% for c in chats %}
+    <li><a href="/conversations/{{ c.id }}">{{ c.name_a }} ↔ {{ c.name_b }}</a>
+      <span class="badge">{{ c.status }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+<form method="post" action="/requests/{{ req.id }}/close" onsubmit="return confirm('Close this request?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <button class="button secondary" type="submit">Close request</button>
+</form>
+{% endblock %}

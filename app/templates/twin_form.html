@@ -1,0 +1,68 @@
+﻿{% extends "base.html" %}
+{% block title %}{% if mode == "new" %}Create my twin{% else %}Edit my twin{% endif %} — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>{% if mode == "new" %}Create my twin{% else %}Edit my twin{% endif %}</h1>
+  <p class="lede">Tick the boxes for fields your twin may share. Unchecked fields stay private and are never sent anywhere.</p>
+</section>
+<form class="twin-form" method="post" action="/twin/{{ mode }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <fieldset>
+    <legend>Identity</legend>
+    <label>Twin display name <input type="text" name="display_name" required maxlength="60" value="{{ form.display_name }}" /></label>
+    <label>Persona <textarea name="persona" rows="2" maxlength="600">{{ form.persona }}</textarea></label>
+    <label>Communication tone <input type="text" name="tone" maxlength="120" value="{{ form.tone }}" placeholder="e.g. warm, concise, professional" /></label>
+    <label class="check"><input type="checkbox" name="public_listing" {% if form.is_public %}checked{% endif %} /> List my twin publicly (visible to all visitors; only ticked fields above are shown)</label>
+  </fieldset>
+  <fieldset>
+    <legend>Shareable profile (tick to authorize)</legend>
+    {% macro share(field, label) -%}
+    <label class="check"><input type="checkbox" name="authorized" value="{{ field }}" {% if field in form.authorized %}checked{% endif %} /> Share {{ label }}</label>
+    {%- endmacro %}
+    <label>Headline <input type="text" name="headline" maxlength="200" value="{{ form.headline }}" /></label>
+    {{ share("headline", "headline") }}
+    <label>Skills (comma-separated) <input type="text" name="skills" value="{{ form.skills }}" /></label>
+    {{ share("skills", "skills") }}
+    <label>Experience (years) <input type="number" name="experience_years" min="0" max="80" value="{{ form.experience_years }}" /></label>
+    {{ share("experience_years", "experience") }}
+    <label>Location <input type="text" name="location" maxlength="120" value="{{ form.location }}" /></label>
+    {{ share("location", "location") }}
+    <label class="check"><input type="checkbox" name="open_to_remote" {% if form.open_to_remote %}checked{% endif %} /> Open to remote</label>
+    <label>Availability <input type="text" name="availability" maxlength="200" value="{{ form.availability }}" /></label>
+    {{ share("availability", "availability") }}
+    <label>Portfolio link <input type="url" name="portfolio_url" maxlength="300" value="{{ form.portfolio_url }}" /></label>
+    {{ share("portfolio_url", "portfolio link") }}
+    <label>Bio <textarea name="bio" rows="2" maxlength="1000">{{ form.bio }}</textarea></label>
+    {{ share("bio", "bio") }}
+    <label>Company <input type="text" name="company" maxlength="200" value="{{ form.company }}" /></label>
+    {{ share("company", "company") }}
+    <label>Hiring role <input type="text" name="role_hiring" maxlength="200" value="{{ form.role_hiring }}" /></label>
+    {{ share("role_hiring", "hiring role") }}
+    <label>Requirements (comma-separated) <input type="text" name="requirements" value="{{ form.requirements }}" /></label>
+    {{ share("requirements", "requirements") }}
+  </fieldset>
+  <fieldset>
+    <legend>Private (never shared)</legend>
+    <label>Phone <input type="text" name="phone" maxlength="60" value="{{ form.phone }}" /></label>
+    <label>Personal email <input type="email" name="personal_email" maxlength="120" value="{{ form.personal_email }}" /></label>
+  </fieldset>
+  <fieldset>
+    <legend>Twin conditions (rules your twin must obey)</legend>
+    <p class="lede">Conditions are enforced by the app — they filter matches and gate chats. They are never quoted to other twins.</p>
+    <label>Maximum price my twin may consider <input type="text" name="cond_max_price" value="{{ form.cond_max_price }}" placeholder="e.g. 500" /></label>
+    <label>Preferred distance (km) <input type="text" name="cond_distance" value="{{ form.cond_distance }}" /></label>
+    <label>Availability note <input type="text" name="cond_availability" maxlength="200" value="{{ form.cond_availability }}" placeholder="e.g. weekdays after 5 PM" /></label>
+    <label class="check"><input type="checkbox" name="cond_auto_answer" {% if form.cond_auto_answer %}checked{% endif %} /> Twin may answer automatically (unchecked: each reply needs one of my notes first)</label>
+    <label class="check"><input type="checkbox" name="cond_require_approval" {% if form.cond_require_approval %}checked{% endif %} /> Require my approval per turn (blocks auto-play; I click every reply)</label>
+  </fieldset>
+  <button class="button" type="submit">{% if mode == "new" %}Create twin{% else %}Save changes{% endif %}</button>
+</form>
+{% if mode == "edit" %}
+<form class="danger-zone" method="post" action="/twin/delete" onsubmit="return confirm('Delete your twin and its conversations? This cannot be undone.');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <h2>Delete twin</h2>
+  <p class="lede">Type <code>delete</code> to confirm. Your account stays, but your twin and its conversations are removed.</p>
+  <label>Confirm <input type="text" name="confirm" maxlength="10" /></label>
+  <button class="button danger" type="submit">Delete my twin</button>
+</form>
+{% endif %}
+{% endblock %}

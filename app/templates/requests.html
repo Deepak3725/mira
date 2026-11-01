@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}My requests — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>My requests</h1>
+  <p class="lede">Needs your twin is working on. Only you can see this page.</p>
+  <p><a class="button" href="/requests/new">New request</a></p>
+</section>
+<section>
+  {% if items %}
+  <ul class="plain-list">
+    {% for r in items %}
+    <li><a href="/requests/{{ r.id }}">{{ r.need_text or "(empty)" }}</a>
+      <span class="badge">{{ r.category }}</span>
+      <span class="badge">{{ r.status }}</span>
+      <span class="lede">· {{ r.twin_name }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="lede">No requests yet. Describe a need and let your twin find providers.</p>
+  {% endif %}
+</section>
+{% endblock %}

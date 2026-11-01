@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Channels - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Messaging channels</h1>
+  <p class="lede">Connect your own accounts. Tokens stay on the server and are never shown. Drafts always preview before sending; scheduled sends need confirmation unless you enable a pre-authorised policy per account.</p>
+</section>
+<section class="me-card">
+  <h2>Connect an account</h2>
+  <form method="post" action="/channels/connect"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Channel
+      <select name="channel">
+        <option value="telegram">Telegram</option>
+        <option value="whatsapp">WhatsApp</option>
+        <option value="messenger">Messenger</option>
+        <option value="instagram">Instagram</option>
+        <option value="mock">Mock (demo)</option>
+      </select>
+    </label>
+    <label>Label <input type="text" name="label" maxlength="120" placeholder="My bot" /></label>
+    <label>Token <input type="text" name="token" maxlength="500" placeholder="Bot/app token (server-side only)" /></label>
+    <button class="button" type="submit">Connect</button>
+  </form>
+  <ul class="plain-list">
+    <li><strong>Telegram:</strong> {{ hints.telegram }}</li>
+    <li><strong>WhatsApp:</strong> {{ hints.whatsapp }}</li>
+    <li><strong>Messenger:</strong> {{ hints.messenger }}</li>
+    <li><strong>Instagram:</strong> {{ hints.instagram }}</li>
+  </ul>
+</section>
+<section>
+  <h2>Your accounts ({{ accounts | length }})</h2>
+  {% if accounts %}
+  <ul class="plain-list">
+    {% for a in accounts %}
+    <li><a href="/channels/{{ a.id }}">{{ a.label or a.channel }}</a>
+      <span class="lede">{{ a.channel }} - {{ a.status }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="lede">None yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

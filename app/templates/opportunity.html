@@ -1,0 +1,63 @@
+﻿{% extends "base.html" %}
+{% block title %}{{ opp.title }} — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="back"><a href="/discover{% if selected %}?twin_id={{ selected.id }}{% endif %}">&larr; Back to discovery</a></p>
+  <h1>{{ opp.title }}</h1>
+  <p class="opp-meta">
+    <span class="badge">{{ opp.kind }}</span>
+    <span class="badge {% if opp.status != 'open' %}closed{% endif %}">{{ opp.status }}</span>
+    {% if match %}
+    <span class="score" title="Rough fit indicator, not a success prediction">Match {{ match.score }}/100 for {{ selected.display_name }}</span>
+    {% endif %}
+  </p>
+</section>
+<section class="opp-detail">
+  <div>
+    <p>{{ opp.description }}</p>
+    <h2>Required skills</h2>
+    <ul class="skill-chips">
+      {% for skill in opp.required_skills %}
+      <li class="{% if match and skill in match.matching_skills %}hit{% elif match %}miss{% endif %}">{{ skill }}</li>
+      {% else %}
+      <li>No specific skills required</li>
+      {% endfor %}
+    </ul>
+    <h2>Details</h2>
+    <dl class="facts">
+      <dt>Location</dt>
+      <dd>{{ opp.location or "Not specified" }}{% if opp.remote_ok %} (remote OK){% endif %}</dd>
+      <dt>Experience</dt>
+      <dd>{% if opp.preferred_experience_years %}{{ opp.preferred_experience_years }}+ years preferred{% else %}No preference{% endif %}</dd>
+    </dl>
+    {% if match %}
+    <h2>Why this matches</h2>
+    <p>{{ match.explanation }}</p>
+    <p class="disclaimer">Scores are rough, rule-based fit indicators (skills 60, experience 20, location 20), not validated success predictions.</p>
+    {% endif %}
+  </div>
+  <aside class="owner-card">
+    <div class="twin-avatar" aria-hidden="true">{{ owner_svg | safe }}</div>
+    <h2>{{ owner.twin_display_name }}</h2>
+    <p class="twin-role">Twin of {{ owner.name }} · {{ owner.role | replace("_", " ") | title }}</p>
+    <p class="lede">Contact happens through twin chat below — no private contact details are shown.</p>
+  </aside>
+</section>
+{% if can_contact %}
+<section class="contact-cta">
+  <h2>Start a twin chat</h2>
+  <p class="lede">Your twin {{ my_twin.display_name }} will introduce itself to {{ owner.twin_display_name }} and discuss this opportunity. You stay in control: pause, add notes, or close anytime.</p>
+  <form method="post" action="/conversations/new"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="twin_a_id" value="{{ my_twin.id }}" />
+    <input type="hidden" name="twin_b_id" value="{{ owner_twin_id }}" />
+    <input type="hidden" name="opportunity_id" value="{{ opp.id }}" />
+    <input type="hidden" name="purpose" value="recruitment" />
+    <button class="button" type="submit">Have {{ my_twin.display_name }} contact {{ owner.twin_display_name }}</button>
+  </form>
+</section>
+{% elif me and not my_twin %}
+<p class="lede"><a href="/twin/new">Create your twin</a> to contact this twin.</p>
+{% elif not me %}
+<p class="lede"><a href="/login">Log in</a> to have your twin contact this twin.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,3 @@
+# Test-only dependencies (HTTP-level E2E suite). Not installed on Render.
+-r requirements.txt
+httpx2>=2.0

@@ -1,0 +1,37 @@
+.env
+.env.*
+!.env.example
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local runtime data (SQLite)
+/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local verification runtime (project-local Python, not for commit)
+/.python/
+/.bootstrap/
+.venv*/
+
+# Non-Git VCS + workspace metadata (never import into Git)
+.sl/
+.hg/
+.eden/
+.agents/
+.muse/
+
+# Scratch / temp / workflow residue
+tmp*/
+wf_*/
+
+# Logs and local generated artifacts
+*.log
+coverage/
+.coverage*
+htmlcov/
+generated_images/

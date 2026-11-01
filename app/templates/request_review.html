@@ -1,0 +1,61 @@
+﻿{% extends "base.html" %}
+{% block title %}Review request — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Review the draft</h1>
+  <p class="lede">Your twin understood the following. Correct anything before confirming — only confirmed details are used for matching.</p>
+</section>
+{% if warnings %}
+<ul class="plain-list">
+  {% for w in warnings %}
+  <li class="form-note">{{ w }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+<blockquote class="need-quote">{{ req.need_text }}</blockquote>
+{% if interp %}
+<section class="interp-panel">
+  <h2>Your twin's interpretation
+    {% if interp.source == "meta" %}<span class="badge">Meta Spark</span>
+    {% elif interp.source == "mock-refined" %}<span class="badge">Simulated AI</span>
+    {% else %}<span class="badge">Rule-based</span>{% endif %}
+  </h2>
+  <p class="form-note">Looking for: <strong>{{ interp.entity }}</strong>
+    ({{ interp.category | title }} · confidence: {{ interp.confidence }})</p>
+  {% if interp.requirements %}
+  <ul class="plain-list">
+    {% for key, value in interp.requirements.items() %}
+    <li class="form-note">{{ key }}: {{ value if value is string or value is number else value | join(', ') }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if interp.clarification %}
+  <p class="form-note"><strong>One question:</strong> {{ interp.clarification }}</p>
+  {% endif %}
+  <p class="form-note">Planned searches: twin network
+    ({% if interp.needs_twin_search %}yes{% else %}no{% endif %}) ·
+    public web ({% if interp.needs_web_search %}suggested — coming in M2{% else %}no{% endif %})</p>
+  {% if interp.usage %}
+  <p class="form-note">Model: {{ interp.usage.model }} · tokens in/out:
+    {{ interp.usage.tokens_in }}/{{ interp.usage.tokens_out }} · est.
+    ${{ interp.usage.est_cost_usd }}</p>
+  {% endif %}
+</section>
+{% endif %}
+<form class="auth-form wide" method="post" action="/requests/{{ req.id }}/confirm"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <label>Category
+    <select name="category">
+      {% for c in categories %}
+      <option value="{{ c }}" {% if c == req.category %}selected{% endif %}>{{ c | title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Maximum budget <input type="text" name="budget" value="{{ current.budget_max or '' }}" placeholder="e.g. 500" /></label>
+  <label>From <input type="text" name="origin" maxlength="120" value="{{ current.origin or '' }}" /></label>
+  <label>To <input type="text" name="destination" maxlength="120" value="{{ current.destination or '' }}" /></label>
+  <label>When <input type="text" name="when" maxlength="120" value="{{ current.when_text or '' }}" placeholder="e.g. tomorrow at 9 AM" /></label>
+  <label>Skills / tags (comma-separated) <input type="text" name="skills" value="{{ (current.skills or []) | join(', ') }}" /></label>
+  <button class="button" type="submit">Confirm &amp; find providers</button>
+</form>
+{% endblock %}

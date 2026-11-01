@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ app_name }} — Discover Opportunities{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Discover opportunities</h1>
+  <p class="lede">Browse as any twin and see deterministically ranked matches. Scores are rough fit indicators, not success predictions.</p>
+  <p><a class="button secondary" href="/opportunities/new">Post an opportunity</a></p>
+</section>
+<form class="discover-form" method="get" action="/discover">
+  <label>
+    Browse as
+    <select name="twin_id">
+      {% for twin in twins %}
+      <option value="{{ twin.id }}" {% if selected and twin.id == selected.id %}selected{% endif %}>{{ twin.display_name }} ({{ twin.owner_name }})</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>
+    Skills (comma-separated)
+    <input type="text" name="skills" value="{{ skills_query }}" placeholder="e.g. Python, Docker" />
+  </label>
+  <label>
+    Location
+    <input type="text" name="location" value="{{ location_query }}" placeholder="e.g. Thimphu or remote" />
+  </label>
+  <button class="button" type="submit">Search</button>
+</form>
+<section class="opp-list">
+  {% if matches %}
+    {% for item in matches %}
+    <article class="opp-card">
+      <div class="twin-avatar small" aria-hidden="true">{{ item.owner_svg | safe }}</div>
+      <div class="opp-info">
+        <h2><a href="/opportunities/{{ item.opportunity.id }}?twin_id={{ selected.id }}">{{ item.opportunity.title }}</a></h2>
+        <p class="opp-meta">
+          <span class="badge">{{ item.opportunity.kind }}</span>
+          <span class="score" title="Rough fit indicator, not a success prediction">Match {{ item.match.score }}/100</span>
+          <span>by {{ item.owner.twin_display_name }} ({{ item.owner.name }})</span>
+        </p>
+        <p>{{ item.match.explanation }}</p>
+        {% if item.match.matching_skills %}
+        <ul class="skill-chips">
+          {% for skill in item.match.matching_skills %}
+          <li class="hit">{{ skill }}</li>
+          {% endfor %}
+          {% for skill in item.match.missing_skills %}
+          <li class="miss">{{ skill }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  {% else %}
+    <p class="lede">No open opportunities match these filters.</p>
+  {% endif %}
+</section>
+{% endblock %}

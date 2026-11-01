@@ -1,0 +1,126 @@
+﻿{% extends "base.html" %}
+{% block title %}{{ conv.name_a }} ↔ {{ conv.name_b }} — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head convo-head">
+  <div>
+    <p class="back"><a href="/conversations">&larr; All conversations</a></p>
+    <h1>{{ conv.name_a }} ↔ {{ conv.name_b }}</h1>
+    <p class="opp-meta">
+      <span class="badge" id="status-badge">{{ conv.status }}</span>
+      <span class="badge">{{ conv.purpose }}</span>
+      <span class="badge">brain: {{ provider }}{% if provider == "mock" %} (simulated){% endif %}</span>
+      {% if conv.opp_title %}<span>· {{ conv.opp_title }}</span>{% endif %}
+      {% if conv.request_id %}<span>· <a href="/requests/{{ conv.request_id }}">request #{{ conv.request_id }}</a> ({{ conv.req_category }})</span>{% endif %}
+      <span id="turn-counter">{{ conv.turn_count }}/{{ conv.max_turns }} twin messages</span>
+    </p>
+  </div>
+  <div class="convo-avatars">
+    <div class="twin-avatar small" title="{{ conv.name_a }} ({{ conv.owner_a_name }})" aria-hidden="true">{{ svg_a | safe }}</div>
+    <div class="twin-avatar small" title="{{ conv.name_b }} ({{ conv.owner_b_name }})" aria-hidden="true">{{ svg_b | safe }}</div>
+  </div>
+</section>
+<section class="chat" id="chat" aria-live="polite">
+  {% for m in messages %}
+  <article class="msg {{ m.sender }}" data-id="{{ m.id }}">
+    <p class="msg-meta">
+      {% if m.sender == "a" %}{{ conv.name_a }}
+      {% elif m.sender == "b" %}{{ conv.name_b }}
+      {% elif m.sender == "system" %}System
+      {% elif m.sender == "owner_a" %}{{ conv.owner_a_name }} (owner)
+      {% elif m.sender == "owner_b" %}{{ conv.owner_b_name }} (owner)
+      {% endif %}
+      {% if m.provider and m.provider != "mock" and m.provider != "owner" %}<span class="badge">{{ m.provider }}</span>{% endif %}
+    </p>
+    <p class="msg-body">{{ m.body }}</p>
+  </article>
+  {% endfor %}
+</section>
+{% if is_owner %}
+<section class="controls">
+  {% if conv.status == "active" %}
+  <form method="post" action="/conversations/{{ conv.id }}/step"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button" type="submit">Next twin message</button></form>
+  <form method="post" action="/conversations/{{ conv.id }}/auto"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="n" value="6" />
+    <button class="button secondary" type="submit">Auto-play 6 turns</button>
+  </form>
+  <form method="post" action="/conversations/{{ conv.id }}/pause"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Pause</button></form>
+  {% elif conv.status == "paused" %}
+  <form method="post" action="/conversations/{{ conv.id }}/resume"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button" type="submit">Resume</button></form>
+  {% endif %}
+  {% if conv.status != "closed" %}
+  <form method="post" action="/conversations/{{ conv.id }}/close"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Close</button></form>
+  {% endif %}
+  {% if (conv.purpose == "recruitment" and conv.opportunity_id) or (conv.purpose == "service" and conv.request_id) %}
+  <form method="post" action="/conversations/{{ conv.id }}/recommend"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Generate summary</button></form>
+  {% endif %}
+</section>
+<section class="controls-grid">
+  <form class="note-form" method="post" action="/conversations/{{ conv.id }}/note"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Add an owner note
+      <input type="text" name="text" maxlength="2000" placeholder="Visible to both twins…" />
+    </label>
+    <button class="button secondary" type="submit">Post note</button>
+  </form>
+  <form class="note-form" method="post" action="/conversations/{{ conv.id }}/decision"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>My decision (owners only decide)
+      <select name="decision">
+        <option value="interested">Interested</option>
+        <option value="not-interested">Not interested</option>
+      </select>
+    </label>
+    <button class="button secondary" type="submit">Record decision</button>
+  </form>
+</section>
+<section>
+  <h2>Decisions &amp; audit</h2>
+  <p class="lede">{{ conv.owner_a_name }}: {{ conv.decision_a or "undecided" }} · {{ conv.owner_b_name }}: {{ conv.decision_b or "undecided" }}</p>
+  <ul class="plain-list audit">
+    {% for a in audit %}
+    <li><code>{{ a.created_at }}</code> {{ a.action }}{% if a.detail %} — {{ a.detail }}{% endif %}</li>
+    {% else %}
+    <li class="lede">No audit events yet.</li>
+    {% endfor %}
+  </ul>
+</section>
+{% elif conv.is_demo %}
+<p class="lede">This is a public demo chat (read-only). The owners control it.</p>
+{% endif %}
+<script>
+(function () {
+  var chat = document.getElementById("chat");
+  var lastId = 0;
+  var nodes = chat.querySelectorAll("[data-id]");
+  if (nodes.length) lastId = parseInt(nodes[nodes.length - 1].getAttribute("data-id"), 10);
+  var names = { a: {{ conv.name_a | tojson }}, b: {{ conv.name_b | tojson }} };
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function label(sender) {
+    if (sender === "a" || sender === "b") return names[sender];
+    if (sender === "system") return "System";
+    return "Owner";
+  }
+  async function poll() {
+    try {
+      var res = await fetch("/conversations/{{ conv.id }}/messages?since_id=" + lastId);
+      if (!res.ok) return;
+      var data = await res.json();
+      data.messages.forEach(function (m) {
+        lastId = Math.max(lastId, m.id);
+        var el = document.createElement("article");
+        el.className = "msg " + m.sender;
+        el.setAttribute("data-id", m.id);
+        el.innerHTML = '<p class="msg-meta">' + esc(label(m.sender)) + "</p>" +
+          '<p class="msg-body">' + esc(m.body) + "</p>";
+        chat.appendChild(el);
+      });
+      var badge = document.getElementById("status-badge");
+      if (badge) badge.textContent = data.status;
+      var counter = document.getElementById("turn-counter");
+      if (counter) counter.textContent = data.turn_count + "/" + data.max_turns + " twin messages";
+    } catch (e) { /* stay silent; next poll retries */ }
+  }
+  setInterval(poll, 2500);
+})();
+</script>
+{% endblock %}

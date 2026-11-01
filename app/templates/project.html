@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}{{ project.title }} - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>{{ project.title }}</h1>
+  <p class="lede">{{ project.status }} - {{ project.goal }}</p>
+</section>
+{% if notice %}<p class="form-note" role="status">{{ notice }}</p>{% endif %}
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+{% if project.status == "draft" %}
+<section class="me-card">
+  <h2>Plan</h2>
+  {% if questions %}
+  <p class="lede">A few questions first:</p>
+  <ul class="plain-list">{% for q in questions %}<li>{{ q }}</li>{% endfor %}</ul>
+  {% endif %}
+  <form method="post" action="/projects/{{ project.id }}/spec"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Deliverable <input type="text" name="deliverable" maxlength="120" /></label>
+    <label>Audience <input type="text" name="audience" maxlength="120" /></label>
+    <button class="button" type="submit">Draft spec + tasks</button>
+  </form>
+</section>
+{% endif %}
+<section>
+  <h2>Tasks ({{ tasks | length }})</h2>
+  {% if tasks %}
+  <ul class="plain-list">
+    {% for t in tasks %}
+    <li>
+      <p><strong>#{{ t.id }} {{ t.title }}</strong> [{{ t.kind }}] {{ t.status }}{% if t.provider %} via {{ t.provider }}/{{ t.model }}{% endif %}{% if t.needs_approval %} (needs approval){% endif %}</p>
+      {% if t.error %}<p class="lede">error: {{ t.error }}</p>{% endif %}
+      <div class="controls">
+        {% if t.needs_approval or t.status == "needs_review" %}
+        <form method="post" action="/projects/{{ project.id }}/tasks/{{ t.id }}/approve"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button" type="submit">Approve</button></form>
+        {% endif %}
+        {% if t.status in ("failed", "needs_review") %}
+        <form method="post" action="/projects/{{ project.id }}/tasks/{{ t.id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Retry</button></form>
+        {% endif %}
+        {% if t.status == "done" %}
+        <form method="post" action="/projects/{{ project.id }}/tasks/{{ t.id }}/review"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Request review</button></form>
+        {% endif %}
+        {% if t.status not in ("done", "cancelled") %}
+        <form method="post" action="/projects/{{ project.id }}/tasks/{{ t.id }}/cancel" onsubmit="return confirm('Cancel this task?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button danger" type="submit">Cancel</button></form>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="lede">No tasks yet.</p>
+  {% endif %}
+  <div class="controls">
+    <form method="post" action="/projects/{{ project.id }}/advance"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button" type="submit">Run next task</button></form>
+    <form method="post" action="/projects/{{ project.id }}/finalize" onsubmit="return confirm('Finish this project?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Finalize</button></form>
+  </div>
+</section>
+<section class="me-card">
+  <h2>Add task</h2>
+  <form method="post" action="/projects/{{ project.id }}/tasks"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Kind
+      <select name="kind">{% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select>
+    </label>
+    <label>Title <input type="text" name="title" maxlength="200" required /></label>
+    <label>Instructions <input type="text" name="instructions" maxlength="8000" /></label>
+    <button class="button" type="submit">Add task</button>
+  </form>
+</section>
+<section>
+  <h2>Files ({{ files | length }})</h2>
+  {% if files %}
+  <ul class="plain-list">{% for f in files %}<li><code>{{ f.path }}</code> v{{ f.version }} <span class="lede">by {{ f.updated_by }}</span></li>{% endfor %}</ul>
+  {% else %}
+  <p class="lede">No files yet.</p>
+  {% endif %}
+  <form method="post" action="/projects/{{ project.id }}/files"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Path <input type="text" name="path" maxlength="200" placeholder="index.html" required /></label>
+    <label>Content <input type="text" name="content" maxlength="200000" /></label>
+    <button class="button secondary" type="submit">Save new version</button>
+  </form>
+</section>
+<section class="me-card">
+  <h2>Run checks</h2>
+  <p class="lede">Approval-gated: runs only allowlisted interpreters (python, pytest, node) in a temp jail with scrubbed secrets and a 60s timeout. Container isolation is not available on this machine.</p>
+  <form method="post" action="/projects/{{ project.id }}/checks"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Command <input type="text" name="command" maxlength="500" placeholder="python -m pytest" required /></label>
+    <label><input type="checkbox" name="confirm" value="yes" /> I approve running this command</label>
+    <button class="button" type="submit">Run checks</button>
+  </form>
+</section>
+<section>
+  <h2>Project controls</h2>
+  <div class="controls">
+    <form method="post" action="/projects/{{ project.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="action" value="pause" /><button class="button secondary" type="submit">Pause</button></form>
+    <form method="post" action="/projects/{{ project.id }}/status"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="action" value="resume" /><button class="button secondary" type="submit">Resume</button></form>
+    <form method="post" action="/projects/{{ project.id }}/status" onsubmit="return confirm('Cancel this project?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="action" value="cancel" /><button class="button danger" type="submit">Cancel project</button></form>
+  </div>
+</section>
+<section>
+  <h2>History</h2>
+  {% if events %}
+  <ul class="plain-list">{% for e in events %}<li><code>{{ e.action }}</code> {{ e.actor }} {{ e.detail[:120] }}</li>{% endfor %}</ul>
+  {% else %}
+  <p class="lede">No events yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

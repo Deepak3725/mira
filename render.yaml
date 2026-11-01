@@ -1,0 +1,42 @@
+# Render Blueprint for MIRA (free tier only).
+#
+# Deploy: Render Dashboard -> New -> Blueprint -> connect this repo.
+# NEVER link a payment method: without one, over-quota services spin down
+# instead of billing (see DEPLOY.md). Plan must stay "free".
+services:
+  - type: web
+    name: mira
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: APP_ENV
+        value: production
+      - key: AI_PROVIDER
+        value: mock
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false # Paste the Neon connection string in the dashboard.
+      - key: MODEL_API_KEY
+        sync: false # Leave empty until live AI is deliberately enabled.
+      - key: META_MODEL
+        value: ""
+      - key: OPENAI_API_KEY
+        sync: false # Leave empty; no vendor billing without a pasted key.
+      - key: OPENAI_MODEL
+        value: ""
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: ""
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: ""
+      - key: AI_ROUTES
+        value: ""

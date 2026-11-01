@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}{{ app_name }} — Twin Dashboard{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Meet the twins</h1>
+  <p class="lede">Below are <strong>fictional demo twins</strong> — examples of what personal twins can do — plus any twins listed publicly. Only explicitly authorized fields are shown; private details never leave the server. <a href="/register">Create your own twin</a>.</p>
+</section>
+<section class="twins-grid">
+  {% for twin in twins %}
+  <article class="twin-card">
+    <div class="twin-avatar" aria-hidden="true">{{ twin.avatar_svg | safe }}</div>
+    <div class="twin-info">
+      <h2>{{ twin.display_name }} <span class="twin-owner">· {{ twin.owner_name }}</span></h2>
+      <p class="twin-role">{{ twin.owner_role | replace("_", " ") | title }} · speaks in a {{ twin.tone }} tone</p>
+      <p>{{ twin.persona | truncate(140) }}</p>
+      {% if twin.public.headline %}
+      <p class="twin-headline">{{ twin.public.headline }}</p>
+      {% endif %}
+      {% if twin.public.skills %}
+      <ul class="skill-chips">
+        {% for skill in twin.public.skills %}
+        <li>{{ skill }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </article>
+  {% endfor %}
+</section>
+<section class="discover-entry">
+  <h2>Discover opportunities</h2>
+  <p class="lede">Top matches per twin, ranked by deterministic rules. Scores are rough fit indicators, not success predictions.</p>
+  {% for spot in spotlights %}
+  <div class="spot-twin">
+    <h3>{{ spot.display_name }} <span class="twin-owner">· {{ spot.owner_name }}</span>
+      <a class="more" href="/discover?twin_id={{ spot.twin_id }}">Open discovery &rarr;</a>
+    </h3>
+    {% if spot.matches %}
+    <div class="opp-list compact">
+      {% for item in spot.matches %}
+      <article class="opp-card">
+        <div class="twin-avatar small" aria-hidden="true">{{ item.owner_svg | safe }}</div>
+        <div class="opp-info">
+          <h4><a href="/opportunities/{{ item.opportunity.id }}?twin_id={{ spot.twin_id }}">{{ item.opportunity.title }}</a></h4>
+          <p class="opp-meta">
+            <span class="badge">{{ item.opportunity.kind }}</span>
+            <span class="score">Match {{ item.match.score }}/100</span>
+            <span>by {{ item.owner.twin_display_name }} ({{ item.owner.name }})</span>
+          </p>
+          {% if item.match.matching_skills %}
+          <ul class="skill-chips">
+            {% for skill in item.match.matching_skills %}
+            <li class="hit">{{ skill }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="lede">No open matches right now.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+<section class="moods">
+  <h2>Companion moods</h2>
+  <p class="lede">The same companion, idle, thinking, and communicating.</p>
+  <div class="moods-row">
+    {% for mood in moods %}
+    <figure>
+      <div class="twin-avatar small" aria-hidden="true">{{ mood.svg | safe }}</div>
+      <figcaption>{{ mood.state }}</figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

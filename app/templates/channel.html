@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}{{ account.label or account.channel }} - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>{{ account.label or account.channel }}</h1>
+  <p class="lede">{{ account.channel }} - {{ account.status }}</p>
+</section>
+{% if notice %}<p class="form-note" role="status">{{ notice }}</p>{% endif %}
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<section class="me-card">
+  <h2>Account</h2>
+  <div class="controls">
+    <form method="post" action="/channels/{{ account.id }}/activate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button" type="submit">Activate</button></form>
+    <form method="post" action="/channels/{{ account.id }}/revoke" onsubmit="return confirm('Revoke this account? Tokens are wiped.');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button danger" type="submit">Revoke</button></form>
+    <form method="post" action="/channels/{{ account.id }}/process"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Send due now</button></form>
+  </div>
+  <form method="post" action="/channels/{{ account.id }}/permissions"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label><input type="checkbox" name="auto_send" value="yes" {% if permissions.auto_send %}checked{% endif %} /> Pre-authorise scheduled sends (skip per-message confirmation)</label>
+    <button class="button secondary" type="submit">Save policy</button>
+  </form>
+</section>
+<section>
+  <h2>Contacts ({{ contacts | length }})</h2>
+  {% if contacts %}
+  <ul class="plain-list">{% for c in contacts %}<li>{{ c.display_name }} <span class="lede">{{ c.external_id }}</span></li>{% endfor %}</ul>
+  {% else %}
+  <p class="lede">None yet.</p>
+  {% endif %}
+  <form method="post" action="/channels/{{ account.id }}/contacts"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Display name <input type="text" name="display_name" maxlength="200" required /></label>
+    <label>Channel id <input type="text" name="external_id" maxlength="200" required /></label>
+    <button class="button secondary" type="submit">Save contact</button>
+  </form>
+</section>
+<section class="me-card">
+  <h2>Draft a message</h2>
+  <form method="post" action="/channels/{{ account.id }}/draft"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Recipient
+      <select name="contact_id">
+        <option value="">Choose later</option>
+        {% for c in contacts %}<option value="{{ c.id }}">{{ c.display_name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Message <input type="text" name="body" maxlength="4000" required /></label>
+    <button class="button" type="submit">Save draft</button>
+  </form>
+</section>
+<section class="me-card">
+  <h2>Quick schedule</h2>
+  <p class="lede">Example: to "Karma", "I missed you", at "11 PM". Ambiguous recipients refuse; scheduling needs confirmation below.</p>
+  <form method="post" action="/channels/{{ account.id }}/quick-schedule"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>To <input type="text" name="to" maxlength="200" required /></label>
+    <label>Message <input type="text" name="body" maxlength="4000" required /></label>
+    <label>At <input type="text" name="when" maxlength="64" placeholder="11 PM" required /></label>
+    <label>Timezone <input type="text" name="tz" maxlength="64" value="UTC" /></label>
+    <label><input type="checkbox" name="confirm" value="yes" /> I confirm the recipient, text, and time</label>
+    <button class="button" type="submit">Schedule</button>
+  </form>
+</section>
+<section>
+  <h2>Outbox ({{ messages | length }})</h2>
+  {% if messages %}
+  <ul class="plain-list">
+    {% for m in messages %}
+    <li>
+      <p><strong>#{{ m.id }}</strong> to {{ m.contact_name or "(no recipient)" }} [{{ m.status }}]{% if m.scheduled_for %} at {{ m.scheduled_for }} UTC{% endif %}{% if m.provider_msg_id %} ({{ m.provider_msg_id }}){% endif %}</p>
+      <p>{{ m.body }}</p>
+      {% if m.last_error %}<p class="lede">error: {{ m.last_error }}</p>{% endif %}
+      <div class="controls">
+        {% if m.status == "draft" %}
+        <form method="post" action="/channels/{{ account.id }}/messages/{{ m.id }}/send"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="confirm" value="yes" /><button class="button" type="submit">Send now</button></form>
+        {% endif %}
+        {% if m.status in ("draft", "failed") %}
+        <form method="post" action="/channels/{{ account.id }}/messages/{{ m.id }}/retry"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Requeue</button></form>
+        {% endif %}
+        {% if m.status in ("draft", "queued") %}
+        <form method="post" action="/channels/{{ account.id }}/messages/{{ m.id }}/cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button danger" type="submit">Cancel</button></form>
+        {% endif %}
+      </div>
+      {% if m.status == "draft" and m.contact_name %}
+      <form class="note-form" method="post" action="/channels/{{ account.id }}/messages/{{ m.id }}/schedule"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <label>At <input type="text" name="when" maxlength="64" placeholder="11 PM" required /></label>
+        <label>Timezone <input type="text" name="tz" maxlength="64" value="UTC" /></label>
+        <label><input type="checkbox" name="confirm" value="yes" /> Confirm</label>
+        <button class="button secondary" type="submit">Schedule</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="lede">Outbox empty.</p>
+  {% endif %}
+</section>
+<section>
+  <h2>Events</h2>
+  {% if events %}
+  <ul class="plain-list">{% for e in events %}<li><code>{{ e.kind }}</code> {{ e.direction }} {{ e.detail[:120] }}</li>{% endfor %}</ul>
+  {% else %}
+  <p class="lede">No events yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

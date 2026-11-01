@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}AI usage — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>AI usage &amp; budget</h1>
+  <p class="lede">Every attempted model call leaves a row here. Provider: <strong>{{ provider }}</strong>. Mock replies always cost $0.</p>
+  {% if summary.scope == "mine" %}<p class="lede">Showing usage for your account only.</p>{% endif %}
+</section>
+<section class="me-grid">
+  <div class="me-card">
+    <h2>This month</h2>
+    <p><strong>${{ "%.4f" | format(summary.monthly_spend) }}</strong> of ${{ "%.2f" | format(summary.monthly_cap) }} cap</p>
+    <p class="lede">{{ summary.requests }} requests · {{ summary.tokens_in }} in / {{ summary.tokens_out }} out tokens · est. ${{ "%.6f" | format(summary.est_cost_usd) }} total · avg {{ summary.avg_latency_ms }} ms</p>
+  </div>
+  <div class="me-card">
+    <h2>By model</h2>
+    {% if summary.by_model %}
+    <ul class="plain-list">
+      {% for m in summary.by_model %}
+      <li><code>{{ m.model }}</code> — {{ m.requests }} req · ${{ "%.6f" | format(m.est_cost_usd) }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="lede">No usage recorded yet.</p>
+    {% endif %}
+  </div>
+  <div class="me-card">
+    <h2>Call outcomes</h2>
+    {% if summary.by_status %}
+    <ul class="plain-list">
+      {% for s in summary.by_status %}
+      <li><code>{{ s.status }}</code> — {{ s.requests }} req · ${{ "%.6f" | format(s.est_cost_usd) }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="lede">No calls recorded yet.</p>
+    {% endif %}
+  </div>
+</section>
+<p class="lede">Caps: ${{ "%.2f" | format(caps.conv) }} per conversation · ${{ "%.2f" | format(caps.user_daily) }} per user per day. Inference stops automatically at any cap.</p>
+<p class="lede">These figures are estimates from this app's own log — not Meta's authoritative balance. Failed calls may still have been billed by Meta: rows marked <code>failed_unknown</code> have unknown cost. Always verify spend in the official Meta dashboard.</p>
+{% endblock %}

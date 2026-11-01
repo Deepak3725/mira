@@ -1,0 +1,54 @@
+﻿{% extends "base.html" %}
+{% block title %}My space — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Hello, {{ me.name }}</h1>
+  <p class="lede">{{ me.email }} · {{ me.role | replace("_", " ") | title }}</p>
+</section>
+<section>
+  <h2>My twin journey</h2>
+  <ol class="journey">
+    <li>{% if twin %}✓ {% endif %}<strong>Create</strong> — {% if twin %}<a href="/twin/edit">twin "{{ twin.display_name }}" ready</a>{% else %}<a href="/twin/new">create your twin</a>{% endif %}</li>
+    <li>{% if approved_memories %}✓ {% endif %}<strong>Teach</strong> — <a href="/memories">{% if approved_memories %}{{ approved_memories }} approved memories{% else %}import knowledge for review{% endif %}</a></li>
+    <li><strong>Talk</strong> — <a href="/voice">talk to your twin by voice or text</a></li>
+    <li>{% if convos %}✓ {% endif %}<strong>Test</strong> — <a href="/discover">discover matches</a> and start a twin chat</li>
+    <li><strong>Activate</strong> — list your twin publicly from <a href="/twin/edit">twin settings</a> and let it represent you</li>
+    <li><strong>Control</strong> — set <a href="/twin/edit">conditions</a>, pause any <a href="/conversations">chat</a>, and record every decision yourself</li>
+  </ol>
+</section>
+<section class="me-grid">
+  <div class="me-card">
+    <h2>My twin</h2>
+    {% if twin %}
+    <p><strong>{{ twin.display_name }}</strong> — {{ twin.tone }}</p>
+    <p class="lede">{{ twin.persona }}</p>
+    <p>
+      <a class="button" href="/twin/edit">Edit twin</a>
+      <a class="button secondary" href="/memories">Memories</a>
+      <a class="button secondary" href="/voice">Voice</a>
+      <a class="button secondary" href="/usage">AI usage</a>
+    </p>
+    {% else %}
+    <p class="lede">You don't have a twin yet.</p>
+    <p><a class="button" href="/twin/new">Create my twin</a></p>
+    {% endif %}
+  </div>
+  <div class="me-card">
+    <h2>My conversations</h2>
+    {% if convos %}
+    <ul class="plain-list">
+      {% for c in convos %}
+      <li><a href="/conversations/{{ c.id }}">{{ c.name_a }} ↔ {{ c.name_b }}</a>
+        <span class="badge">{{ c.status }}</span>
+        {% if c.opp_title %}<span class="lede">· {{ c.opp_title }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="lede">No conversations yet. Find an opportunity and let your twin reach out.</p>
+    {% endif %}
+    <p><a class="button secondary" href="/conversations">All conversations</a></p>
+  </div>
+</section>
+<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Log out</button></form>
+{% endblock %}

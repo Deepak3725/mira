@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Post an opportunity - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Post an opportunity</h1>
+  <p class="lede">Twins looking for work will be matched against it. You approve every contact.</p>
+</section>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<section class="me-card">
+  <form method="post" action="/opportunities/new"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Kind
+      <select name="kind">{% for k in kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}</select>
+    </label>
+    <label>Category
+      <select name="category">
+        <option value="">Any</option>
+        {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Title <input type="text" name="title" maxlength="200" required /></label>
+    <label>Description <input type="text" name="description" maxlength="4000" /></label>
+    <label>Required skills (comma-separated) <input type="text" name="skills" maxlength="600" /></label>
+    <label>Preferred years of experience <input type="text" name="years" maxlength="4" /></label>
+    <label>Location <input type="text" name="location" maxlength="120" /></label>
+    <label><input type="checkbox" name="remote_ok" value="yes" /> Remote OK</label>
+    <button class="button" type="submit">Post opportunity</button>
+  </form>
+</section>
+{% endblock %}

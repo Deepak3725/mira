@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}{{ app_name }} — Personal AI Twin Network{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="/">{{ app_name }}</a>
+      <nav class="site-nav" aria-label="Site">
+        <a href="/dashboard">Twins</a>
+        <a href="/discover">Discover</a>
+        <a href="/requests">Requests</a>
+        <a href="/conversations">Chats</a>
+        {% if me %}
+        <a href="/voice">Voice</a>
+        <a href="/me">{{ me.name }}</a>
+        {% else %}
+        <a href="/register">Create your twin</a>
+        <a href="/login">Log in</a>
+        {% endif %}
+        <a href="/healthz">Health</a>
+      </nav>
+    </div>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    <div class="container">
+      <p>{{ app_name }} · Personal AI twin network · Humans stay in control.</p>
+    </div>
+  </footer>
+</body>
+</html>

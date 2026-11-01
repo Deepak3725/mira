@@ -1,0 +1,23 @@
+﻿{% extends "base.html" %}
+{% block title %}New request — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Ask your twin to find something</h1>
+  <p class="lede">Describe what you need in your own words. Your twin drafts the structured requirements — you review and confirm before anything is shared.</p>
+</section>
+<form class="auth-form wide" method="post" action="/requests/new"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <input type="hidden" name="idem_key" value="{{ idem_key }}" />
+  <label>What do you need?
+    <textarea name="need_text" rows="3" maxlength="2000" required placeholder="e.g. I need a taxi from GCIT to Thimphu tomorrow at 9 AM. My maximum budget is Nu. 500."></textarea>
+  </label>
+  <label>Category
+    <select name="category">
+      {% for c in categories %}
+      <option value="{{ c }}">{{ c | title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="button" type="submit">Draft request</button>
+</form>
+{% endblock %}

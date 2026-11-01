@@ -1,0 +1,23 @@
+﻿{% extends "base.html" %}
+{% block title %}Create account — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Create your account</h1>
+  <p class="lede">One account, one personal twin. Your private details stay private — only fields you authorize are ever shared.</p>
+</section>
+<form class="auth-form" method="post" action="/register"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <label>Name <input type="text" name="name" required maxlength="60" autocomplete="name" /></label>
+  <label>Email <input type="email" name="email" required maxlength="120" autocomplete="email" /></label>
+  <label>Password (8+ characters) <input type="password" name="password" required minlength="8" autocomplete="new-password" /></label>
+  <label>I am a…
+    <select name="role">
+      {% for role in roles %}
+      <option value="{{ role }}">{{ role | replace("_", " ") | title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button class="button" type="submit">Create account</button>
+  <p class="lede">Already have one? <a href="/login">Log in</a>.</p>
+</form>
+{% endblock %}

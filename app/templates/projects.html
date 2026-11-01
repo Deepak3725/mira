@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Projects - {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Projects</h1>
+  <p class="lede">Describe a goal; MIRA drafts a plan, agents do the tasks, and you approve the important steps.</p>
+</section>
+<section class="me-card">
+  <h2>New project</h2>
+  <form method="post" action="/projects/new"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Title <input type="text" name="title" maxlength="200" required /></label>
+    <label>Goal <input type="text" name="goal" maxlength="4000" placeholder="Build an e-commerce website" /></label>
+    <button class="button" type="submit">Create project</button>
+  </form>
+</section>
+<section>
+  <h2>Your projects ({{ projects | length }})</h2>
+  {% if projects %}
+  <ul class="plain-list">
+    {% for p in projects %}
+    <li><a href="/projects/{{ p.id }}">{{ p.title }}</a>
+      <span class="lede">{{ p.status }} - {{ p.goal[:80] }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="lede">None yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

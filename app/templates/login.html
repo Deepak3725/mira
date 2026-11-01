@@ -1,0 +1,15 @@
+﻿{% extends "base.html" %}
+{% block title %}Log in — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Log in</h1>
+  <p class="lede">Demo accounts: <code>deepak.demo@example.com</code> / <code>mira-deepak-demo</code> (same pattern for karma, pema, tashi).</p>
+</section>
+<form class="auth-form" method="post" action="/login"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <label>Email <input type="email" name="email" required maxlength="120" autocomplete="email" /></label>
+  <label>Password <input type="password" name="password" required autocomplete="current-password" /></label>
+  <button class="button" type="submit">Log in</button>
+  <p class="lede">New here? <a href="/register">Create an account</a>.</p>
+</form>
+{% endblock %}

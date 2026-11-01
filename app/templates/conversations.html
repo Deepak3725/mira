@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Conversations — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Twin conversations</h1>
+  <p class="lede">Twins talk to twins. Owners watch, pause, add notes, and keep every final decision.</p>
+</section>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+{% if me %}
+<section>
+  <h2>My conversations</h2>
+  {% if mine %}
+  <ul class="plain-list">
+    {% for c in mine %}
+    <li><a href="/conversations/{{ c.id }}">{{ c.name_a }} ↔ {{ c.name_b }}</a>
+      <span class="badge">{{ c.status }}</span>
+      <span class="badge">{{ c.purpose }}</span>
+      {% if c.opp_title %}<span class="lede">· {{ c.opp_title }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="lede">None yet — start one from an opportunity page, or pick two twins below.</p>
+  {% endif %}
+</section>
+{% else %}
+<p class="lede"><a href="/login">Log in</a> to start your twins' conversations. Public demo chats are below.</p>
+{% endif %}
+<section>
+  <h2>Public demo chats</h2>
+  {% if demos %}
+  <ul class="plain-list">
+    {% for c in demos %}
+    <li><a href="/conversations/{{ c.id }}">{{ c.name_a }} ↔ {{ c.name_b }}</a>
+      <span class="badge">{{ c.status }}</span>
+      {% if c.opp_title %}<span class="lede">· {{ c.opp_title }}</span>{% endif %}
+      <span class="lede">(read-only)</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="lede">No public demos yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
