@@ -60,6 +60,27 @@ class TestProductionGuards(unittest.TestCase):
         with mock.patch("app.main.settings", good):
             check_production_settings()
 
+    def test_startup_refuses_missing_database_url_in_production(self):
+        from app.main import check_production_settings
+
+        check_production_settings()  # dev defaults pass (SQLite allowed)
+        for blank in ("", "   "):
+            prod = mock.Mock(app_env="production",
+                             session_secret="x" * 40,
+                             database_url=blank)
+            with mock.patch("app.main.settings", prod):
+                self.assertRaises(RuntimeError,
+                                  check_production_settings)
+        prod = mock.Mock(app_env="production",
+                         session_secret="x" * 40,
+                         database_url="postgresql://db/mira")
+        with mock.patch("app.main.settings", prod):
+            check_production_settings()
+        dev = mock.Mock(app_env="dev", session_secret="anything",
+                        database_url="")
+        with mock.patch("app.main.settings", dev):
+            check_production_settings()
+
     def test_seed_refuses_production(self):
         from app.seed import refuse_in_production
 

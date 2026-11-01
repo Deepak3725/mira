@@ -39,6 +39,8 @@ def check_production_settings() -> None:
         raise RuntimeError("SESSION_SECRET must be set in production.")
     if len(settings.session_secret) < 32:
         raise RuntimeError("SESSION_SECRET must be at least 32 characters.")
+    if not (settings.database_url or "").strip():
+        raise RuntimeError("DATABASE_URL must be set in production.")
 
 
 @asynccontextmanager
