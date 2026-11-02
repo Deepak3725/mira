@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Notification — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head narrow">
+  <h1>Notification</h1>
+  <p class="lede">Matches, decisions, and search updates for your twin.</p>
+  {% if items %}
+  <form method="post" action="/notifications/read"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="notif_id" value="all" />
+    <button class="button secondary" type="submit">Mark all read</button>
+  </form>
+  {% endif %}
+</section>
+<section>
+  {% if items %}
+  <ul class="request-list">
+    {% for n in items %}
+    <li class="request-card{% if not n.is_read %} unread{% endif %}">
+      <h2>{% if n.link %}<a href="{{ n.link }}">{{ n.title }}</a>{% else %}{{ n.title }}{% endif %}</h2>
+      <p class="request-meta">
+        <span class="badge">{{ n.kind }}</span>
+        <span>· {{ n.created_at }} UTC</span>
+        {% if not n.is_read %}<span class="badge">new</span>{% endif %}
+      </p>
+      {% if n.body %}<p class="lede">{{ n.body }}</p>{% endif %}
+      {% if not n.is_read %}
+      <form method="post" action="/notifications/read"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="notif_id" value="{{ n.id }}" />
+        <button class="button secondary" type="submit">Mark read</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty-state">
+    <h2>No notifications</h2>
+    <p>New matches and search updates will appear here.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

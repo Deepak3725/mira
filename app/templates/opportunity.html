@@ -60,4 +60,45 @@
 {% elif not me %}
 <p class="lede"><a href="/login">Log in</a> to have your twin contact this twin.</p>
 {% endif %}
+{% if is_owner %}
+<section>
+  <h2>Manage this offer</h2>
+  <form class="auth-form" method="post" action="/opportunities/{{ opp.id }}/edit"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Title
+      <input type="text" name="title" value="{{ opp.title }}" maxlength="200" required />
+    </label>
+    <label>Description
+      <textarea name="description" rows="3" maxlength="4000">{{ opp.description or "" }}</textarea>
+    </label>
+    <label>Required skills (comma-separated)
+      <input type="text" name="skills" value="{{ skills_text }}" />
+    </label>
+    <label>Preferred years
+      <input type="text" name="years" value="{{ opp.preferred_experience_years if opp.preferred_experience_years is not none else '' }}" />
+    </label>
+    <label>Location
+      <input type="text" name="location" value="{{ opp.location or '' }}" maxlength="120" />
+    </label>
+    <label class="check"><input type="checkbox" name="remote_ok" value="yes"{% if opp.remote_ok %} checked{% endif %} /> Remote OK</label>
+    <label>Category
+      <select name="category">
+        <option value="">—</option>
+        {% for c in categories %}
+        <option value="{{ c }}"{% if c == opp_category %} selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="button secondary" type="submit">Save changes</button>
+  </form>
+  {% if opp.status == "open" %}
+  <form method="post" action="/opportunities/{{ opp.id }}/close" onsubmit="return confirm('Close this offer?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button class="button secondary" type="submit">Close offer</button>
+  </form>
+  {% else %}
+  <form method="post" action="/opportunities/{{ opp.id }}/reopen"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button class="button" type="submit">Reopen offer</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}

@@ -13,6 +13,8 @@ Unknown models are refused rather than billed blindly.
 from __future__ import annotations
 
 import datetime as dt
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from sqlite3 import Connection
 from typing import Any
@@ -116,10 +118,25 @@ def check_budgets(conn: Connection, user_id: int | None, conv_id: int | None) ->
             f"Per-conversation AI budget reached (${settings.budget_per_conversation_usd:.2f}).")
 
 
-# usage_log.status values. "failed_unknown" rows store 0 tokens / $0
-# numerically, but the status + notes make explicit that the real usage is
-# unknown and may have been billed -- never read them as genuinely free.
+# usage_log.status values. "failed_known" rows carry the real reported
+# usage; "failed_unknown" rows store 0 tokens (unknown, never invented)
+# but a conservative *estimated* cost (see below), so an uncertain call
+# can never look free to the budget checks.
 STATUSES = ("ok", "failed_known", "failed_unknown")
+
+
+#: Assumed token usage used ONLY to price failed_unknown rows. Sized to
+#: cover the largest production call shape (a 5-round Responses tool
+#: loop on top of legacy chat prompt bounds: system <=3000 chars plus
+#: 6 history turns <=1200 chars each, output <=300 tokens per round,
+#: JSON refinement <=4000 tokens). This is a deliberately generous
+#: planning estimate, not a measured value and not a proven upper bound
+#: (tool-loop inputs also depend on caller-supplied messages and tool
+#: outputs, which run_task does not cap). At muse-spark-1.3 Standard
+#: rates ($1.25/$4.25 per 1M) one unknown call costs $0.0420, so ~24
+#: consecutive unknown failures trip the $1 per-conversation cap.
+UNKNOWN_TOKENS_IN = 20_000
+UNKNOWN_TOKENS_OUT = 4_000
 
 
 def record_usage(conn: Connection, *, provider: str, model: str,
@@ -130,7 +147,14 @@ def record_usage(conn: Connection, *, provider: str, model: str,
     if status not in STATUSES:
         raise ValueError(f"Unknown usage status {status!r}.")
     if status == "failed_unknown":
-        tokens_in, tokens_out, cost = 0, 0, 0.0
+        # Unknown usage is never $0: price the conservative estimate so
+        # monthly, daily, and per-conversation checks all count it. Token
+        # columns stay 0 (unknown, not invented); the cost is the guard.
+        # Unpriced vendor/model raises BudgetExhausted (fail closed):
+        # production paths refuse those before any network attempt.
+        tokens_in, tokens_out = 0, 0
+        cost = estimate_cost_for(provider, model,
+                                 UNKNOWN_TOKENS_IN, UNKNOWN_TOKENS_OUT)
     else:
         cost = estimate_cost_for(provider, model, tokens_in, tokens_out)
     conn.execute(
@@ -147,20 +171,52 @@ def record_usage(conn: Connection, *, provider: str, model: str,
     return cost
 
 
+#: Serializes paid provider calls within this process so concurrent
+#: requests cannot all pass check_budgets on stale totals. This is a
+#: per-process guard only: separate workers or instances do not share
+#: it. A genuinely global hard cap needs database reservations (see
+#: the Step 5 report), not a wider lock.
+_paid_call_lock = threading.RLock()
+
+
+@contextmanager
+def paid_call_guard():
+    """Hold the paid-call lock across check -> request -> record."""
+    _paid_call_lock.acquire()
+    try:
+        yield
+    finally:
+        _paid_call_lock.release()
+
+
 def guarded_generate(conn: Connection, provider, context, *,
-                     conv_id: int | None, user_id: int | None):
-    """Generate one reply with budget checks + usage recording."""
+                     conv_id: int | None, user_id: int | None,
+                     max_tokens: int | None = None):
+    """Generate one reply with budget checks + usage recording.
+
+    ``max_tokens`` is an optional chat output-cap override, passed to
+    the provider only when set (keeps duck-typed test doubles working).
+    """
+    # Only Meta honors the override today; Mock ignores it.
+    extra = {"max_tokens": max_tokens} if max_tokens is not None else {}
     if provider.name == "mock":
-        result = provider.generate(context)
+        result = provider.generate(context, **extra)
         record_usage(conn, provider="mock", model="mock", conv_id=conv_id,
                      user_id=user_id, tokens_in=0, tokens_out=0)
         return result
-    check_budgets(conn, user_id, conv_id)
-    result = provider.generate(context)
-    record_usage(conn, provider=provider.name, model=provider.model,
-                 conv_id=conv_id, user_id=user_id,
-                 tokens_in=result.tokens_in, tokens_out=result.tokens_out)
-    return result
+    with paid_call_guard():
+        check_budgets(conn, user_id, conv_id)
+        result = provider.generate(context, **extra)
+        parts = []
+        if getattr(result, "finish_reason", None):
+            parts.append(f"finish_reason={result.finish_reason}")
+        if getattr(result, "reasoning_tokens", None) is not None:
+            parts.append(f"reasoning_tokens={result.reasoning_tokens}")
+        record_usage(conn, provider=provider.name, model=provider.model,
+                     conv_id=conv_id, user_id=user_id,
+                     tokens_in=result.tokens_in, tokens_out=result.tokens_out,
+                     notes="; ".join(parts))
+        return result
 
 
 def user_monthly_spend(conn: Connection, user_id: int | None) -> float:

@@ -123,7 +123,10 @@ class Importer:
         ctx = _Ctx()
         if isinstance(data, list):
             for item in data:
-                self.parse_item(item, filename, ctx)
+                try:
+                    self.parse_item(item, filename, ctx)
+                except Exception:  # noqa: BLE001 - one bad item skips
+                    ctx.skipped += 1
                 if ctx.full():
                     break
         else:
@@ -142,7 +145,10 @@ class Importer:
             except (ValueError, UnicodeDecodeError):
                 ctx.skipped += 1
                 continue
-            self.parse_item(item, filename, ctx)
+            try:
+                self.parse_item(item, filename, ctx)
+            except Exception:  # noqa: BLE001 - one bad item skips
+                ctx.skipped += 1
             if ctx.full():
                 break
         return ImportResult(provider=self.name,

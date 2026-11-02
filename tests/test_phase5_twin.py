@@ -214,6 +214,44 @@ class TestRouteRoundtrip(SessionCase):
         self.assertIn(auth.SESSION_COOKIE, resp.headers["set-cookie"])
         self.assertIsNone(auth.current_user_id(_request(session)))
 
+    def test_twin_edit_shows_public_preview(self):
+        from app.routes import accounts as accounts_route
+
+        uid = self._user()
+        session = auth.create_session(uid)
+        accounts, _mem, _pages = self._target_modules()
+        factory = lambda *a, **k: self._conn()  # noqa: E731
+        patches = [mock.patch.object(accounts, "get_connection",
+                                     side_effect=factory),
+                   mock.patch("app.db.get_connection",
+                              side_effect=factory)]
+        for patcher in patches:
+            patcher.start()
+        self.addCleanup(lambda: [p.stop() for p in patches])
+        from app.db import create_twin
+
+        conn = self._conn()
+        try:
+            create_twin(
+                conn, user_id=uid, display_name="Ess", persona="p",
+                tone="t",
+                profile={"headline": "Backend dev",
+                         "skills": ["Python"],
+                         "phone": "+975-00-SECRET"},
+                authorized_fields=["headline", "skills"],
+                avatar_seed="s")
+            conn.commit()
+        finally:
+            conn.close()
+        page = accounts_route.twin_edit_form(
+            _request(session)).body.decode()
+        self.assertIn("what other twins see", page)
+        preview = page.split("what other twins see", 1)[1]
+        preview = preview.split("</section>", 1)[0]
+        self.assertIn("Backend dev", preview)
+        self.assertIn("Python", preview)
+        self.assertNotIn("+975-00-SECRET", preview)
+
     def test_twin_update_roundtrip(self):
         from app.routes import accounts as accounts_route
 
@@ -554,7 +592,8 @@ class TestSecurityHeaders(unittest.TestCase):
 
 class TestSchemaV12(SessionCase):
     def test_version_and_revoked_table(self):
-        self.assertEqual(SCHEMA_VERSION, 12)
+        # v14 adds twin_chats (Find Something history).
+        self.assertEqual(SCHEMA_VERSION, 14)
         conn = self._conn()
         try:
             tables = {r["name"] for r in conn.execute(
@@ -563,6 +602,6 @@ class TestSchemaV12(SessionCase):
             row = conn.execute(
                 "SELECT version FROM schema_version WHERE id = 1"
             ).fetchone()
-            self.assertEqual(row["version"], 12)
+            self.assertEqual(row["version"], SCHEMA_VERSION)
         finally:
             conn.close()

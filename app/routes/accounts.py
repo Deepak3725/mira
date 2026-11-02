@@ -39,6 +39,7 @@ SHAREABLE_FIELDS = (
     ("availability", "Availability"),
     ("portfolio_url", "Portfolio link"),
     ("bio", "Bio"),
+    ("interests", "Interests"),
     ("company", "Company"),
     ("role_hiring", "Hiring role"),
     ("requirements", "Requirements"),
@@ -196,7 +197,10 @@ def login(request: Request, email: str = Form(""), password: str = Form(""),
         row = get_user_by_email(conn, _clean(email, 120).lower())
     finally:
         conn.close()
-    if row is None or not auth.verify_password(password, row["password_hash"]):
+    # Always run the password hash (dummy when unknown) so missing
+    # accounts take the same time as wrong passwords.
+    candidate = row["password_hash"] if row is not None else auth.DUMMY_HASH
+    if row is None or not auth.verify_password(password, candidate):
         return _form_error(request, "login.html", "Invalid email or password.")
     return _login_response(row["id"])
 
@@ -294,10 +298,13 @@ def _twin_form_context(twin=None) -> dict:
         "location": get("location"), "availability": get("availability"),
         "portfolio_url": get("portfolio_url"), "bio": get("bio"),
         "company": get("company"), "role_hiring": get("role_hiring"),
+        "interests": ", ".join(get("interests", []) or []),
         "requirements": ", ".join(get("requirements", []) or []),
         "phone": get("phone"), "personal_email": get("personal_email"),
         "open_to_remote": bool(get("open_to_remote", False)),
-        "authorized": authorized or [f for f, _ in SHAREABLE_FIELDS[:7]],
+        # Private by default: new twins share nothing until the owner
+        # ticks boxes; edits show the stored allowlist verbatim.
+        "authorized": authorized,
         "fields": SHAREABLE_FIELDS,
     }
 
@@ -333,10 +340,13 @@ def twin_edit_form(request: Request):
         conn.close()
     if twin is None:
         return RedirectResponse(url="/twin/new", status_code=303)
+    from ..privacy import twin_public_view
+
     return templates.TemplateResponse(
         request, "twin_form.html",
         {"app_name": settings.app_name, "me": me, "mode": "edit",
          "form": _twin_form_context(twin), "error": "",
+         "preview": twin_public_view(twin),
          "csrf_token": auth.csrf_for_request(request, me["id"])},
     )
 
@@ -345,10 +355,13 @@ def _profile_from_form(
     headline: str, skills: str, experience_years: str, location: str,
     availability: str, portfolio_url: str, bio: str, company: str,
     role_hiring: str, requirements: str, phone: str, personal_email: str,
-    open_to_remote: str | None,
+    open_to_remote: str | None, interests: str = "",
 ) -> dict:
-    def csv(value: str) -> list[str]:
-        return [s.strip()[:120] for s in value.split(",") if s.strip()][:30]
+    def csv(value: object) -> list[str]:
+        # Direct unit calls may leave a Form default in place of a
+        # string; HTTP always supplies real strings.
+        text = value if isinstance(value, str) else ""
+        return [s.strip()[:120] for s in text.split(",") if s.strip()][:30]
 
     years: int | None = None
     try:
@@ -361,6 +374,7 @@ def _profile_from_form(
         "open_to_remote": bool(open_to_remote),
         "availability": _clean(availability, 200),
         "portfolio_url": _clean(portfolio_url, 300), "bio": _clean(bio, 1000),
+        "interests": csv(interests),
         "company": _clean(company, 200), "role_hiring": _clean(role_hiring, 200),
         "requirements": csv(requirements),
         "phone": _clean(phone, 60), "personal_email": _clean(personal_email, 120),
@@ -375,6 +389,7 @@ def twin_create(
     location: str = Form(""), availability: str = Form(""), portfolio_url: str = Form(""),
     bio: str = Form(""), company: str = Form(""), role_hiring: str = Form(""),
     requirements: str = Form(""), phone: str = Form(""), personal_email: str = Form(""),
+    interests: str = Form(""),
     open_to_remote: str | None = Form(None), authorized: list[str] = Form([]),
     public_listing: str | None = Form(None),
     cond_max_price: str = Form(""), cond_auto_answer: str | None = Form(None),
@@ -395,7 +410,7 @@ def twin_create(
     profile = _profile_from_form(headline, skills, experience_years, location,
                                  availability, portfolio_url, bio, company,
                                  role_hiring, requirements, phone, personal_email,
-                                 open_to_remote)
+                                 open_to_remote, interests)
     conn = get_connection()
     try:
         if get_twin_by_user(conn, me["id"]) is not None:
@@ -429,6 +444,7 @@ def twin_update(
     location: str = Form(""), availability: str = Form(""), portfolio_url: str = Form(""),
     bio: str = Form(""), company: str = Form(""), role_hiring: str = Form(""),
     requirements: str = Form(""), phone: str = Form(""), personal_email: str = Form(""),
+    interests: str = Form(""),
     open_to_remote: str | None = Form(None), authorized: list[str] = Form([]),
     public_listing: str | None = Form(None),
     cond_max_price: str = Form(""), cond_auto_answer: str | None = Form(None),
@@ -448,13 +464,17 @@ def twin_update(
         if twin is None:
             return RedirectResponse(url="/twin/new", status_code=303)
         if not display_name:
-            return _form_error(request, "twin_form.html", "Your twin needs a display name.",
-                               {"mode": "edit", "form": _twin_form_context(twin)})
+            from ..privacy import twin_public_view
+
+            return _form_error(
+                request, "twin_form.html", "Your twin needs a display name.",
+                {"mode": "edit", "form": _twin_form_context(twin),
+                 "preview": twin_public_view(twin)})
         allowed = [f for f in authorized if f in dict(SHAREABLE_FIELDS)]
         profile = _profile_from_form(headline, skills, experience_years, location,
                                      availability, portfolio_url, bio, company,
                                      role_hiring, requirements, phone, personal_email,
-                                     open_to_remote)
+                                     open_to_remote, interests)
         update_twin(conn, twin["id"], display_name=display_name,
                     persona=_clean(persona, 600), tone=_clean(tone, 120) or "friendly",
                     profile=profile, authorized_fields=allowed,

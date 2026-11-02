@@ -220,6 +220,9 @@ def _cancel_pending(conn, state: dict, owner_id: int,
     if pending and pending.get("type") == "need_confirm":
         return _reply("Cancelled. The request was not posted.",
                       transcript)
+    if pending and pending.get("type") == "need_duration":
+        return _reply("Cancelled. The request was not posted.",
+                      transcript)
     if pending and pending.get("type") == "pending_correct":
         return _reply("Cancelled. Nothing changed.", transcript)
     return _reply("Cancelled.", transcript)
@@ -863,12 +866,41 @@ def _do_opportunities(conn, state: dict, twin_id: int | None,
                   transcript)
 
 
-def _do_need(conn, state: dict, owner_id: int, twin_id: int | None,
-             text: str, transcript) -> dict:
-    if twin_id is None:
-        return _reply("You need a twin first. Say 'create my"
-                      " twin'.", transcript)
-    parsed = parse_need(text)
+_DURATION_RE = re.compile(
+    r"(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+    r"(minutes?|mins?|hours?|hrs?|days?|weeks?)",
+    re.IGNORECASE,
+)
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                 "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+_UNIT_MINUTES = {"minute": 1, "minutes": 1, "min": 1, "mins": 1,
+                 "hour": 60, "hours": 60, "hr": 60, "hrs": 60,
+                 "day": 1440, "days": 1440,
+                 "week": 10080, "weeks": 10080}
+_NO_DEADLINE_RE = re.compile(r"\bno\s+(deadline|limit)\b|\bnone\b",
+                             re.IGNORECASE)
+_DURATION_QUESTION = ("I'll look for relevant opportunities and notify"
+                      " you when I find a match. How long should I"
+                      " search? Say 1 hour, 2 hours, 5 hours, 1 day,"
+                      " 1 week, or no deadline.")
+
+
+def _spoken_minutes(text: str) -> int | None:
+    """Minutes from a duration reply, or None when unstated."""
+    match = _DURATION_RE.search(text or "")
+    if not match:
+        return None
+    raw = match.group(1).lower()
+    number = int(raw) if raw.isdigit() else _NUMBER_WORDS.get(raw)
+    unit = _UNIT_MINUTES.get(match.group(2).lower())
+    if not number or not unit:
+        return None
+    return number * unit
+
+
+def _propose_need(conn, state: dict, owner_id: int, twin_id: int,
+                  text: str, parsed: dict, minutes: int | None,
+                  transcript) -> dict:
     reqs = parsed.get("requirements", {}) or {}
     bits = [f"{k}={v}" for k, v in list(reqs.items())[:4]
             if v not in (None, "", [], {})]
@@ -876,29 +908,101 @@ def _do_need(conn, state: dict, owner_id: int, twin_id: int | None,
                         "twin_id": twin_id,
                         "category": parsed.get("category", "other"),
                         "need_text": text[:2000],
-                        "requirements": reqs}
+                        "requirements": reqs,
+                        "minutes": minutes,
+                        "quantity": parsed.get("quantity") or 1}
     proposal = (f"Post this request? Category:"
                 f" {parsed.get('category', 'other')}"
-                + (f"; {', '.join(bits)}" if bits else "")
-                + ". Say yes to post, no to cancel.")
+                + (f"; {', '.join(bits)}" if bits else ""))
+    if minutes:
+        proposal += f"; searching for {minutes // 60}h" \
+            if minutes % 60 == 0 and minutes >= 60 \
+            else f"; searching for {minutes}m"
+    else:
+        proposal += "; no deadline"
+    proposal += ". Say yes to post, no to cancel."
     for warning in (parsed.get("warnings") or [])[:2]:
         proposal += f" Note: {warning}"
     return _reply(proposal, transcript, expect_confirmation=True,
                   done=False)
 
 
+def _do_need(conn, state: dict, owner_id: int, twin_id: int | None,
+             text: str, transcript) -> dict:
+    if twin_id is None:
+        return _reply("You need a twin first. Say 'create my"
+                      " twin'.", transcript)
+    parsed = parse_need(text)
+    minutes = parsed.get("deadline_minutes")
+    if minutes is None:
+        # No stated duration: ask once, then propose.
+        state["pending"] = {"type": "need_duration",
+                            "twin_id": twin_id,
+                            "category": parsed.get("category", "other"),
+                            "need_text": text[:2000],
+                            "requirements": parsed.get("requirements",
+                                                       {}) or {},
+                            "quantity": parsed.get("quantity") or 1,
+                            "warnings": (parsed.get("warnings") or [])[:2]}
+        return _reply(_DURATION_QUESTION, transcript,
+                      expect_confirmation=False, done=False)
+    return _propose_need(conn, state, owner_id, twin_id, text, parsed,
+                         minutes, transcript)
+
+
+def _answer_duration(conn, state: dict, owner_id: int,
+                     transcript) -> dict:
+    """Resolve the pending duration question from one reply."""
+    from ..request_parse import parse_need as _parse
+
+    pending = state["pending"] or {}
+    text = (transcript.text or "").strip()
+    if _NO_DEADLINE_RE.search(text):
+        minutes = None
+    else:
+        minutes = _spoken_minutes(text)
+        if minutes is None:
+            minutes = (_parse(text).get("deadline_minutes")
+                       if text else None)
+    if minutes is None and not _NO_DEADLINE_RE.search(text):
+        return _reply(_DURATION_QUESTION, transcript,
+                      expect_confirmation=False, done=False)
+    parsed = {"requirements": pending.get("requirements", {}),
+              "category": pending.get("category", "other"),
+              "quantity": pending.get("quantity", 1),
+              "warnings": pending.get("warnings", [])}
+    return _propose_need(conn, state, owner_id, pending.get("twin_id"),
+                         pending.get("need_text", ""), parsed, minutes,
+                         transcript)
+
+
 def _post_pending_need(conn, state: dict, owner_id: int,
                        transcript) -> dict:
+    from .. import matcher as _matcher
+    from ..db import enqueue_match_event as _enqueue
+
     pending = state["pending"] or {}
     state["pending"] = None
     try:
+        minutes = pending.get("minutes")
+        expires = (_matcher.plus_minutes(_matcher.now_stamp(), minutes)
+                   if minutes else None)
         req_id, _created = need_engine.create_need(
             conn, twin_id=pending.get("twin_id"),
             owner_user_id=owner_id,
             category=pending.get("category", "other"),
             need_text=pending.get("need_text", ""),
-            requirements=pending.get("requirements"))
+            requirements=pending.get("requirements"),
+            expires_at=expires,
+            quantity_requested=pending.get("quantity") or 1)
         need_engine.confirm_request(conn, req_id, owner_id)
+        _enqueue(conn, event_type="request_saved", ref_type="request",
+                 ref_id=req_id)
+        conn.commit()
+        try:
+            _matcher.process_due(conn, _matcher.now_stamp(), limit=5)
+        except Exception:  # noqa: BLE001 - sweeper retries later
+            conn.rollback()
     except Exception as exc:  # noqa: BLE001 - engine error to user
         return _reply(f"I couldn't post it: {exc}", transcript)
     return _reply(f"Posted request #{req_id}"
@@ -1033,6 +1137,15 @@ def handle_transcript(conn, *, user_id: int, twin_id: int | None,
         return _chat_branch(conn, state, user_id, twin_id, command,
                             transcript)
     pending = state["pending"]
+    if pending is not None and pending.get("type") == "need_duration":
+        said_none = bool(_NO_DEADLINE_RE.search(transcript.text or ""))
+        if is_deny(transcript.text) and not said_none:
+            return _cancel_pending(conn, state, user_id, transcript)
+        if is_affirm(transcript.text) and not _spoken_minutes(
+                transcript.text):
+            return _reply(_DURATION_QUESTION, transcript,
+                          expect_confirmation=False, done=False)
+        return _answer_duration(conn, state, user_id, transcript)
     if pending is not None and is_affirm(transcript.text):
         if pending.get("type") == "message":
             return _confirm_message(conn, state, user_id, transcript)

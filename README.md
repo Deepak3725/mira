@@ -3,8 +3,13 @@
 MIRA is a network of personal AI twins. Each twin represents its owner —
 identity, skills, experience, preferences — and can talk to other twins,
 exchange explicitly authorized information, and coordinate tasks. Owners watch
-everything and keep every final decision. Recruitment is the first demo use
-case, not the whole product.
+everything and keep every final decision. Opportunity coordination is the
+first demo use case, not the whole product.
+
+MIRA is not a recruitment screener: it never ranks applicants, scores
+suitability, assesses interviews, or issues hiring verdicts. Twins help
+their own owners discover opportunities and coordinate; assessment of
+other people is deliberately absent (see Compliance below).
 
 ## Your twin journey
 
@@ -26,27 +31,40 @@ what personal twins can do — the product is your twin, not the demo cast.
   Tashi) with original programmatic SVG mascots.
 - **Discovery + deterministic matching** — skill/experience/location scoring
   (0–100 rough fit indicator, never a success prediction), filters, and
-  explanations. Zero AI cost.
+  explanations. Zero AI cost. Relevance is computed for your own twin
+  only — MIRA never scores other people's twins.
 - **Twin-to-twin chat** — reusable conversation engine: turns, pause/resume,
   owner notes, withdrawal via close, audit trail, turn limits, per-side owner
   decisions. Deterministic mock brain included; real Meta inference is an
-  optional, budget-guarded upgrade (currently OFF).
-- **Recruitment demo** — discover → twin contact → exchange → transparent
-  recommendation → owners decide. Twins never hire.
+  optional, budget-guarded upgrade (verified with small live batches, OFF
+  by default).
+- **Opportunity coordination demo** — discover → twin contact → exchange →
+  owners decide. Twins coordinate; they never assess applicants.
 - **Knowledge import** — upload ChatGPT `conversations.json`, review extracted
   candidates, approve/edit/reject/delete. Retrieval is local keyword search;
   no embeddings, no vector DB.
 - **Cost controls** — usage log (tokens, model, $ estimate), monthly /
   per-user-daily / per-conversation caps, graceful mock fallback with a
   visible notice when inference is unavailable or exhausted.
-- **Privacy by default** — discovery, matching, and recommendations compute
-  from authorized public fields only; new twins are private unless listed;
-  private twins can't be contacted; non-owners get 404s, not errors.
+- **Privacy by default** — discovery and matching compute from authorized
+  public fields only; new twins are private unless listed; private twins
+  can't be contacted; non-owners get 404s, not errors. The twin editor
+  previews exactly what other twins can see.
 - **Bot-to-bot requests** — post a need in words, confirm the parsed draft,
-  get a ranked provider shortlist (price 40, coverage 30, availability 15,
-  tags 15), contact twins idempotently, chat with owner conditions enforced
-  (budget filter, auto-answer and per-turn approval gates). Seeker budget
-  ceilings are never shared with providers. Twins cannot pay or commit.
+  get matching providers with the matching facts shown (no scores, no
+  verdicts), contact twins idempotently, chat with owner conditions
+  enforced (budget filter, auto-answer and per-turn approval gates).
+  Seeker budget ceilings are never shared with providers. Twins cannot
+  pay or commit.
+- **Find Something (universal posts)** — one workflow for jobs, taxis,
+  services, tutors, collaborators, and arbitrary needs: describe it in
+  words (form or voice), preview, confirm, edit, or withdraw. Discovery
+  runs both directions: seekers find offers, and helpers discover open
+  needs they could answer. Categories are labels, never gates.
+- **Two-sided coordination** — every twin chat appears in both owners'
+  Requests pages with per-owner interest shown separately. Each owner
+  records interested/not-interested independently; recording interest
+  is never a commitment.
 
 ## Prerequisites (Windows)
 
@@ -61,19 +79,46 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env
-python -m app.seed
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Seed an explicit demo database (idempotent: safe to rerun; never wipes).
+The `--db` target is printed before anything is written:
+
+```powershell
+$env:AI_PROVIDER='mock'
+.\.venv\Scripts\python.exe -m app.seed --db data/demo.db
+```
+
+Run the server against that same database (mock brain: $0, deterministic):
+
+```powershell
+$env:AI_PROVIDER='mock'; $env:DATABASE_PATH='data/demo.db'
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). See [DEMO.md](DEMO.md)
-for the 2-minute demo script and demo logins.
+for the demo walkthrough, demo logins, and how to reset the demo database
+(delete `data/demo.db*` explicitly, then reseed — the seeder itself never
+deletes anything). Presenters follow
+[DEMO_PLAYBOOK.md](DEMO_PLAYBOOK.md), the verified step-by-step demo
+script with preflight, recovery, and cleanup safety.
 
-Run tests (stdlib `unittest`; the HTTP E2E file needs the test extras):
+Run tests (stdlib `unittest`; the HTTP E2E file needs the test extras).
+Use exactly this form: `-t .` (or `tests.*` module paths) is required so the
+`tests/__init__.py` safety bootstrap loads and forces mock/offline mode:
 
 ```powershell
 pip install -r requirements-test.txt
-python -m unittest discover -s tests
+$env:MIRA_TEST_DATABASE_URL='sqlite'; $env:DATABASE_URL=''
+python -m unittest discover -s tests -t .
 ```
+
+Do NOT use `discover -s tests` without `-t .` or run test files directly as
+scripts: both bypass the safety bootstrap and ambient provider configuration
+would apply. The HTTP E2E module drives the app fully in-process through a
+socket-free ASGI transport, so all tests (610, including 10 E2E, 14
+full-stack journey tests, and the 11-journey synthetic-user suite) pass
+even in restricted sandboxes.
 
 ## Configuration (.env)
 
@@ -89,7 +134,8 @@ python -m unittest discover -s tests
 | `APP_ENV` | `dev` | `production` enables secure cookies, demo blocks, secret checks. |
 | `DATABASE_URL` | _(empty)_ | Neon Postgres string for deployment. Empty = local SQLite. |
 | `DATABASE_PATH` | `data/mira.db` | SQLite file used when `DATABASE_URL` is empty. |
-| `MIRA_TEST_DATABASE_URL` | _(empty)_ | Suite runs against this Postgres (staging branch) when set. |
+| `MIRA_TEST_DATABASE_URL` | _(empty)_ | Suite runs against this Postgres (staging branch) when set. Test-only: the server always ignores it. |
+| `MIRA_DEMO_MODE` | `false` | `1` allows demo seeding/logins on an isolated demo service. Never on a production user database. |
 
 Public deployment (Render + Neon, $0) is documented separately in
 [DEPLOY.md](DEPLOY.md).
@@ -121,6 +167,17 @@ Browser → FastAPI (app/routes) → engine (conversations, matching, memories)
   Mock delivery is verified end to end — vendor delivery needs a live
   token and a real handshake test before any claim.
 
+## Compliance (no applicant screening)
+
+MIRA deliberately contains no automated recruitment screening: no candidate
+ranking, no suitability scores of other people, no interview assessment, no
+hiring verdicts, and no "job" hiring-request category. Relevance scores are
+computed for the viewer's own twin only; provider lists show matching facts
+without scores; close-outs append no assessments. Compliance is enforced by
+route-level tests (`TestJourneyCompliance`) and verdict-absence tests. This
+is the project's own interpretation of the hackathon's AI Job Application
+Screener prohibition — no official approval is claimed.
+
 ## Honest limitations
 
 - **Auth**: PBKDF2 passwords, HMAC-signed sessions (revoked on logout),
@@ -140,8 +197,10 @@ Browser → FastAPI (app/routes) → engine (conversations, matching, memories)
 - **Import**: ChatGPT/Claude/Gemini exports (JSON/ZIP, size-capped) plus a
   tiny generic JSON shape. No live sync with any AI account, ever.
 - **Hosting**: Render Free + Neon Free blueprint in `render.yaml`;
-  re-verify free-tier limits at deploy time. Server binds and E2E browser
-  flows must be verified outside sandboxed runners.
+  re-verify free-tier limits at deploy time. E2E HTTP flows are verified
+  in-process; real-browser rendering still needs a manual check.
+- **Deletion**: twin deletion is supported; user-account deletion has no
+  route yet (documented gap).
 
 ## Project layout
 
@@ -150,4 +209,5 @@ app/            # FastAPI app: routes, engine, providers, import pipeline
 tests/          # unittest suites per phase + sample export fixture
 data/           # SQLite file (created at runtime, git-ignored)
 DEMO.md         # demo script
+DEMO_PLAYBOOK.md # verified presenter playbook (preflight + 3:15 script)
 ```

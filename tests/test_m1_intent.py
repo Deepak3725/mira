@@ -32,7 +32,7 @@ TEAM = "Find people interested in collaborating on an AI project."
 LAPTOP = "Find a laptop under $800 with 16GB RAM."
 
 SAMPLES = (
-    (TAXI, "transport"), (JOB, "job"), (SERVICE, "service"),
+    (TAXI, "transport"), (JOB, "other"), (SERVICE, "service"),
     (SUPPLY, "supply"), (TEAM, "collaboration"), (LAPTOP, "other"),
 )
 
@@ -69,7 +69,9 @@ class M1Case(unittest.TestCase):
 
 
 class TestSamples(unittest.TestCase):
-    def test_six_samples_across_six_categories(self):
+    # NOTE (hackathon compliance): hiring-speak ("Find a React
+    # developer...") parses as "other", not a job-hiring category.
+    def test_samples_map_to_categories(self):
         seen = set()
         for text, category in SAMPLES:
             with self.subTest(text=text):
@@ -167,15 +169,28 @@ class TestMetaRefinement(M1Case):
         self.assertEqual(out["requirements"]["skills"], ["gaming"])
 
     def test_known_category_survives_model_override(self):
-        payload = {"category": "supply", "entity": "dev shop",
+        payload = {"category": "supply", "entity": "tutor shop",
+                   "requirements": {"skills": ["ML"]},
+                   "needs_twin_search": True, "clarification": "",
+                   "confidence": "high"}
+        provider, _ = _meta_provider(payload)
+        out = interpret_need(SERVICE, conn=self.conn,
+                             user_id=self.deepak["id"], provider=provider)
+        self.assertEqual(out["category"], "service")
+        self.assertEqual(out["requirements"]["skills"], ["ML"])
+
+    def test_legacy_job_category_normalized_to_other(self):
+        # A model returning the removed hiring category must not
+        # reintroduce it: deterministic "other" wins.
+        payload = {"category": "job", "entity": "dev shop",
                    "requirements": {"skills": ["React"]},
                    "needs_twin_search": True, "clarification": "",
                    "confidence": "high"}
         provider, _ = _meta_provider(payload)
         out = interpret_need(JOB, conn=self.conn,
                              user_id=self.deepak["id"], provider=provider)
-        self.assertEqual(out["category"], "job")
-        self.assertEqual(out["requirements"]["skills"], ["React"])
+        self.assertEqual(out["category"], "other")
+        self.assertEqual(out["source"], "meta")
 
     def test_invalid_category_sanitized(self):
         det = parse_need("I need help")
@@ -267,7 +282,7 @@ class TestFailureAccounting(M1Case):
         out = self._run(starved)
         self.assertNotEqual(out["source"], "meta")
         self.assertEqual(out["source"], "mock-refined")
-        self.assertEqual(out["category"], "job")  # deterministic survives
+        self.assertEqual(out["category"], "other")  # deterministic survives
         rows = self._rows()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["status"], "failed_known")
@@ -331,7 +346,14 @@ class TestFailureAccounting(M1Case):
         self._run(lambda u, k, p: (_ for _ in ()).throw(
             MetaAPIError("boom")))
         row = self._rows()[0]
-        self.assertEqual(row["est_cost_usd"], 0)
+        self.assertEqual((row["tokens_in"], row["tokens_out"]), (0, 0))
+        self.assertAlmostEqual(
+            row["est_cost_usd"],
+            budget_engine.estimate_cost_for(
+                "meta", "muse-spark-1.3",
+                budget_engine.UNKNOWN_TOKENS_IN,
+                budget_engine.UNKNOWN_TOKENS_OUT))
+        self.assertGreater(row["est_cost_usd"], 0)
         self.assertEqual(row["status"], "failed_unknown")
         self.assertTrue(row["notes"])
         summary = budget_engine.usage_summary(self.conn)

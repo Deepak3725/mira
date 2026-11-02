@@ -1,23 +1,22 @@
 {% extends "base.html" %}
-{% block title %}{{ app_name }} — Discover Opportunities{% endblock %}
+{% block title %}{{ app_name }} — Find Something{% endblock %}
 {% block content %}
 <section class="discover-hero">
   <div>
-    <h1>Discover opportunities</h1>
-    <p class="lede">Browse as any twin and see deterministically ranked matches. Scores are rough fit indicators, not success predictions.</p>
-    <p><a class="button secondary" href="/opportunities/new">Post an opportunity</a></p>
+    <h1>Find something</h1>
+    {% if selected %}
+    <p class="lede">Describe what you need and let your twin {{ selected.display_name }} find relevant possibilities — jobs, services, transport, collaborators, or anything else. Ranked by deterministic rules; scores are rough fit indicators, not success predictions — and only you ever see your twin scored.</p>
+    {% else %}
+    <p class="lede">Public listings, newest first. <a href="/register">Create your twin</a> to see relevance ranked for you — MIRA never scores other people's twins.</p>
+    {% endif %}
+    <p><a class="button" href="/requests/new">Post a need</a> <a class="button secondary" href="/opportunities/new">Post an offer</a></p>
   </div>
   <img src="/static/img/globe.svg" alt="Globe illustration showing opportunities around the world" />
 </section>
 <form class="discover-form" method="get" action="/discover">
-  <label>
-    Browse as
-    <select name="twin_id">
-      {% for twin in twins %}
-      <option value="{{ twin.id }}" {% if selected and twin.id == selected.id %}selected{% endif %}>{{ twin.display_name }} ({{ twin.owner_name }})</option>
-      {% endfor %}
-    </select>
-  </label>
+  {% if selected %}
+  <p class="lede">Showing relevance for <strong>{{ selected.display_name }}</strong> (your twin).</p>
+  {% endif %}
   <label>
     Skills (comma-separated)
     <input type="text" name="skills" value="{{ skills_query }}" placeholder="e.g. Python, Docker" />
@@ -29,17 +28,21 @@
   <button class="button" type="submit">Search</button>
 </form>
 <section class="opp-list" aria-live="polite">
+  <h2>Offers for you</h2>
   {% if matches %}
     {% for item in matches %}
     <article class="opp-card">
       <div class="twin-avatar small" aria-hidden="true">{{ item.owner_svg | safe }}</div>
       <div class="opp-info">
-        <h2><a href="/opportunities/{{ item.opportunity.id }}?twin_id={{ selected.id }}">{{ item.opportunity.title }}</a></h2>
+        <h2><a href="/opportunities/{{ item.opportunity.id }}{% if selected %}?twin_id={{ selected.id }}{% endif %}">{{ item.opportunity.title }}</a></h2>
         <p class="opp-meta">
           <span class="badge">{{ item.opportunity.kind }}</span>
-          <span class="score" title="Rough fit indicator, not a success prediction">Match {{ item.match.score }}/100</span>
+          {% if item.match %}
+          <span class="score" title="Rough fit indicator for your twin, not a success prediction">Match {{ item.match.score }}/100</span>
+          {% endif %}
           <span>by {{ item.owner.twin_display_name }} ({{ item.owner.name }})</span>
         </p>
+        {% if item.match %}
         <p>{{ item.match.explanation }}</p>
         {% if item.match.matching_skills %}
         <ul class="skill-chips">
@@ -51,17 +54,63 @@
           {% endfor %}
         </ul>
         {% endif %}
+        {% else %}
+        <p>{{ item.opportunity.description }}</p>
+        {% endif %}
       </div>
     </article>
     {% endfor %}
   {% else %}
     <div class="empty-state">
       <img src="/static/img/empty-search.svg" alt="" />
-      <h2>No open opportunities match these filters</h2>
-      <p>Try widening the skills or location, browse as a different twin, or post the opportunity yourself.</p>
-      <p><a class="button secondary" href="/opportunities/new">Post an opportunity</a></p>
+      <h2>No open offers match these filters</h2>
+      <p>Try widening the skills or location, or post what you need instead.</p>
+      <p><a class="button secondary" href="/requests/new">Post a need</a></p>
     </div>
   {% endif %}
 </section>
+{% if selected %}
+<section class="opp-list" aria-live="polite">
+  <h2>Open needs you could help with</h2>
+  <p class="lede">Needs other owners shared publicly. Answering one starts a twin-to-twin chat both owners control — no scores, no verdicts.</p>
+  {% if needs %}
+    {% for item in needs %}
+    <article class="opp-card">
+      <div class="twin-avatar small" aria-hidden="true">{{ item.seeker_svg | safe }}</div>
+      <div class="opp-info">
+        <h2>{{ item.need.title }}</h2>
+        <p class="opp-meta">
+          <span class="badge">{{ item.need.category }}</span>
+          <span class="badge">{{ item.need.status }}</span>
+          <span>by {{ item.seeker.twin_display_name }} ({{ item.seeker.name }})</span>
+        </p>
+        <p>{{ item.need.need_text }}</p>
+        {% if item.need.requirements %}
+        <ul class="skill-chips">
+          {% for key, value in item.need.requirements.items() %}
+          <li>{{ key }}: {% if value is string or value is number %}{{ value }}{% else %}{{ value | join(', ') }}{% endif %}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        <p class="lede">{{ item.match.explanation }}</p>
+        {% if item.via_offering %}
+        <p class="lede">Fits your offering: {{ item.via_offering.title }}</p>
+        {% endif %}
+        <form method="post" action="/discover/needs/{{ item.need.id }}/contact"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <button class="button" type="submit">Have {{ selected.display_name }} answer {{ item.seeker.twin_display_name }}</button>
+        </form>
+      </div>
+    </article>
+    {% endfor %}
+  {% else %}
+    <div class="empty-state">
+      <img src="/static/img/empty-search.svg" alt="" />
+      <h2>No open needs match your twin right now</h2>
+      <p>Check back later, or post an offer so seekers can find you.</p>
+      <p><a class="button secondary" href="/opportunities/new">Post an offer</a></p>
+    </div>
+  {% endif %}
+</section>
+{% endif %}
 <img class="mountain-band" src="/static/img/mountains.svg" alt="" aria-hidden="true" />
 {% endblock %}

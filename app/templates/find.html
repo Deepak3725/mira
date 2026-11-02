@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Find Something — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head narrow">
+  <h1>What are you looking for?</h1>
+  <p class="lede">Talk to {{ twin_name }} in words. Your twin searches and tells you what it finds.</p>
+</section>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<section class="chat-thread" id="chat-thread" aria-label="Conversation with your twin" aria-live="polite">
+  {% if not messages %}
+  <div class="empty-state">
+    <h2>No messages yet</h2>
+    <p>Describe what you need. For example:</p>
+    <ul class="example-prompts">
+      <li><button type="button" class="chip" data-fill="I'm looking for a full-stack developer job in Bhutan.">a full-stack developer job in Bhutan</button></li>
+      <li><button type="button" class="chip" data-fill="I need a taxi from Thimphu to Dagana tomorrow. I need four seats.">a taxi from Thimphu to Dagana</button></li>
+      <li><button type="button" class="chip" data-fill="I want to find a piano teacher who can teach beginners on weekends.">a weekend piano teacher</button></li>
+    </ul>
+  </div>
+  {% endif %}
+  {% for m in messages %}
+  <div class="bubble-row {{ m.role }}">
+    <div class="bubble">
+      <p class="bubble-body">{{ m.body }}</p>
+      {% if m.kind == "results" and cards.get(m.id) %}
+      <ul class="result-cards">
+        {% for c in cards[m.id] %}
+        <li>
+          <a href="/requests/{{ m.ref_id }}"><strong>{{ c.title }}</strong></a>
+          <span class="badge">{{ c.kind }}</span>
+          <span class="badge">{{ c.status }}</span>
+          {% if c.reason %}<p class="result-why">{{ c.reason }}</p>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% elif m.kind == "results" %}
+      <p class="result-none"><a href="/requests/{{ m.ref_id }}">Open this search</a></p>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</section>
+<form class="chat-form" method="post" action="/find" id="find-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <label class="visually-hidden" for="find-message">Message your twin</label>
+  <textarea name="message" id="find-message" rows="2" maxlength="2000" required placeholder="Describe what you're looking for…" autofocus>{{ draft }}</textarea>
+  <button class="button" type="submit" id="find-send">Send</button>
+</form>
+<p class="form-note">Enter sends · Shift+Enter adds a line</p>
+<script>
+(function () {
+  var thread = document.getElementById("chat-thread");
+  if (thread) thread.scrollTop = thread.scrollHeight;
+  var form = document.getElementById("find-form");
+  var input = document.getElementById("find-message");
+  var send = document.getElementById("find-send");
+  document.querySelectorAll("[data-fill]").forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      input.value = chip.getAttribute("data-fill");
+      input.focus();
+    });
+  });
+  if (form && input) {
+    input.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        form.requestSubmit();
+      }
+    });
+    form.addEventListener("submit", function () {
+      send.disabled = true;
+      send.textContent = "Sending…";
+    });
+  }
+})();
+</script>
+{% endblock %}

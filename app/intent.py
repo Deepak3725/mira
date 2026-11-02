@@ -63,18 +63,17 @@ INTENT_SCHEMA: dict[str, Any] = {
 }
 
 _ENTITY_LABELS = {
-    "transport": "ride", "job": "hire", "service": "service",
+    "transport": "ride", "service": "service",
     "supply": "supplier", "collaboration": "collaborator", "other": "request",
 }
 
 _CLARIFICATIONS = {
     "transport": ("Where should the trip start and end, and when do you need it? "
                   "Add a maximum budget if you have one."),
-    "job": "What role or skills should I look for, and where (onsite city or remote)?",
     "service": "What exactly do you need done, and where and when?",
     "supply": "What product and quantity do you need, and where should it go?",
     "collaboration": "What project or goal is the collaboration about, and what skills are needed?",
-    "other": ("What kind of help do you need -- for example a ride, a hire, "
+    "other": ("What kind of help do you need -- for example a ride, "
               "a service, a supplier, or a collaborator? One sentence is enough."),
 }
 
@@ -195,7 +194,9 @@ def assess(deterministic: dict) -> tuple[str, str | None]:
     requirements = deterministic.get("requirements", {}) or {}
     if category == "other" or not requirements:
         level = "low" if category == "other" else "medium"
-        return level, _CLARIFICATIONS[category]
+        # .get: legacy stored "job" categories map to the generic prompt.
+        return level, _CLARIFICATIONS.get(category,
+                                          _CLARIFICATIONS["other"])
     if category == "transport" and not (
             requirements.get("origin") or requirements.get("destination")):
         return "medium", _CLARIFICATIONS["transport"]
@@ -264,13 +265,24 @@ def interpret_need(text: str, *, conn: Connection | None = None,
                 "Model refinement skipped: no usage-recording connection.")
         else:
             try:
-                budget_engine.check_budgets(conn, user_id, None)
-                out = chosen.generate_json(
-                    build_refine_messages(text, deterministic), INTENT_SCHEMA)
-                cost = budget_engine.record_usage(
-                    conn, provider="meta", model=chosen.model, conv_id=None,
-                    user_id=user_id, tokens_in=out["tokens_in"],
-                    tokens_out=out["tokens_out"])
+                with budget_engine.paid_call_guard():
+                    budget_engine.check_budgets(conn, user_id, None)
+                    out = chosen.generate_json(
+                        build_refine_messages(text, deterministic),
+                        INTENT_SCHEMA)
+                    diag = []
+                    if out.get("finish_reason"):
+                        diag.append(
+                            f"finish_reason={out['finish_reason']}")
+                    if out.get("reasoning_tokens") is not None:
+                        diag.append(
+                            f"reasoning_tokens={out['reasoning_tokens']}")
+                    cost = budget_engine.record_usage(
+                        conn, provider="meta", model=chosen.model,
+                        conv_id=None, user_id=user_id,
+                        tokens_in=out["tokens_in"],
+                        tokens_out=out["tokens_out"],
+                        notes="; ".join(diag))
                 refined = sanitize_refinement(out["data"], deterministic)
                 refined["source"] = "meta"
                 refined["warnings"] = base["warnings"]
@@ -280,6 +292,12 @@ def interpret_need(text: str, *, conn: Connection | None = None,
                     "tokens_in": out["tokens_in"],
                     "tokens_out": out["tokens_out"],
                     "est_cost_usd": round(cost, 6)}
+                if out.get("finish_reason"):
+                    refined["usage"]["finish_reason"] = \
+                        out["finish_reason"]
+                if out.get("reasoning_tokens") is not None:
+                    refined["usage"]["reasoning_tokens"] = \
+                        out["reasoning_tokens"]
                 if refined["confidence"] == "high":
                     refined["clarification"] = ""
                 elif not refined["clarification"]:
@@ -288,7 +306,8 @@ def interpret_need(text: str, *, conn: Connection | None = None,
             except MetaAPIError as exc:
                 # A request was attempted: it may have been billed, so it
                 # must leave a row. Known usage keeps its real cost;
-                # unknown usage is labelled, never silently $0.
+                # unknown usage is labelled failed_unknown and priced at
+                # the conservative estimate, so budget checks count it.
                 if exc.usage_known:
                     budget_engine.record_usage(
                         conn, provider="meta", model=chosen.model,

@@ -45,11 +45,11 @@ quotas, and no uptime SLA. Do not present it as 100,000-user capacity.
 |---|---|---|
 | `APP_ENV` | `production` | Enables secure cookies, demo blocks, secret checks |
 | `DATABASE_URL` | Neon prod string | Empty = local SQLite (dev only) |
-| `SESSION_SECRET` | generated (40+ chars) | Render `generateValue`; app refuses to boot without it |
+| `SESSION_SECRET` | generated (32+ chars enforced, 40+ recommended) | Render `generateValue`; app refuses to boot without it |
 | `AI_PROVIDER` | `mock` | Set `meta` only to deliberately enable live AI |
 | `META_MODEL` | empty until needed | e.g. `muse-spark-1.3` |
 | `MODEL_API_KEY` | empty until needed | Never commit, never log |
-| `PYTHON_VERSION` | `3.13.5` | Matches local dev runtime |
+| `PYTHON_VERSION` | `3.13.5` | 3.13.x line (local dev runs 3.13.9) |
 
 Local testing against Postgres: set `MIRA_TEST_DATABASE_URL` to the **Neon
 staging** string in your local `.env`, then run the suite. Tests wipe and
@@ -106,7 +106,7 @@ recreate the `mira_test` schema on every `setUp` — never point it at prod.
 
 - CSRF tokens on all 23 POST routes; `Secure`/`HttpOnly`/`SameSite=lax`
   cookies in production; generic error pages (no tracebacks).
-- `SESSION_SECRET` required (40+ chars) or the app refuses to boot.
+- `SESSION_SECRET` required (minimum 32 chars enforced, 40+ recommended) or the app refuses to boot.
 - Demo seeding refuses to run in production; `@example.com` demo logins
   are rejected in production.
 - Registration/login rate-limited per IP (in-memory; resets on restart —

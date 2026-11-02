@@ -1,5 +1,6 @@
 """Deploy-prep tests: PG adapter translation, schema parity, dual driver."""
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,7 +49,7 @@ class TestTranslatePg(unittest.TestCase):
 class TestSchemaParity(unittest.TestCase):
     TABLES = {"schema_version", "users", "twins", "opportunities",
               "requests", "conversations", "messages", "audit_events",
-              "usage_log", "memories"}
+              "usage_log", "memories", "twin_chats"}
 
     def test_postgres_has_no_sqlite_idioms(self):
         blob = "\n".join(app_schema.statements("postgres"))
@@ -105,6 +106,183 @@ class TestSchemaParity(unittest.TestCase):
                     "SELECT version FROM schema_version WHERE id = 1"
                 ).fetchone()["version"]
                 self.assertEqual(version, SCHEMA_VERSION)
+            finally:
+                conn.close()
+
+
+class TestInitPostgresSafety(unittest.TestCase):
+    def test_production_path_never_drops_and_commits(self):
+        from unittest import mock
+
+        from app import db as db_mod
+
+        calls = []
+
+        class FakeConn:
+            driver = "postgres"
+
+            def execute(self, sql, params=()):
+                calls.append(sql)
+                return []
+
+            def commit(self):
+                calls.append("COMMIT")
+
+            def close(self):
+                calls.append("CLOSE")
+
+        with mock.patch.object(db_mod, "_pg_connection",
+                               return_value=FakeConn()):
+            db_mod._init_postgres("postgres://prod/db", None)
+        self.assertTrue(any("CREATE TABLE" in c for c in calls))
+        self.assertFalse(any("DROP SCHEMA" in c for c in calls))
+        self.assertIn("COMMIT", calls)
+        self.assertEqual(calls[-1], "CLOSE")
+
+    def test_test_schema_drop_is_scoped_to_test_schema(self):
+        from unittest import mock
+
+        from app import db as db_mod
+
+        calls = []
+
+        class FakeConn:
+            driver = "postgres"
+
+            def execute(self, sql, params=()):
+                calls.append(sql)
+                return []
+
+            def commit(self):
+                calls.append("COMMIT")
+
+            def close(self):
+                calls.append("CLOSE")
+
+        with mock.patch.object(db_mod, "_pg_connection",
+                               return_value=FakeConn()):
+            db_mod._init_postgres("postgres://test/db",
+                                  db_mod.TEST_SCHEMA)
+        drops = [c for c in calls if "DROP SCHEMA" in c]
+        self.assertEqual(len(drops), 1)
+        self.assertIn(db_mod.TEST_SCHEMA, drops[0])
+        self.assertIn("COMMIT", calls)
+
+
+class TestDatabaseRedirectGuard(unittest.TestCase):
+    """MIRA_TEST_DATABASE_URL must never redirect the app itself.
+
+    The variable leaked from .env into the running server: login read
+    the shared Postgres test schema (freshly wiped by boot-time
+    init_db) instead of data/mira.db, and every DB-backed page hung
+    then 500'd whenever Postgres was unreachable. The redirect now
+    applies only when the test-suite marker is active.
+    """
+
+    URL = "postgresql://user:pw@localhost:5432/mira_test"
+    MODE_VAR = "MIRA_TEST_MODE"
+    URL_VAR = "MIRA_TEST_DATABASE_URL"
+
+    def setUp(self):
+        from app import db as db_mod
+
+        self.db_mod = db_mod
+        self._saved = {k: os.environ.get(k)
+                       for k in (self.MODE_VAR, self.URL_VAR)}
+
+    def tearDown(self):
+        for key, value in self._saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_app_context_ignores_test_url(self):
+        os.environ.pop(self.MODE_VAR, None)
+        os.environ[self.URL_VAR] = self.URL
+        self.assertEqual(self.db_mod.test_database_url(), "")
+
+    def test_app_context_uses_sqlite_path_despite_test_url(self):
+        import sqlite3
+
+        os.environ.pop(self.MODE_VAR, None)
+        os.environ[self.URL_VAR] = self.URL
+        with tempfile.TemporaryDirectory() as td:
+            db = str(Path(td) / "app.db")
+            init_db(db)
+            conn = get_connection(db)
+            try:
+                self.assertIsInstance(conn, sqlite3.Connection)
+                conn.execute(
+                    "INSERT INTO users (name, role, email)"
+                    " VALUES ('App', 'professional', 'app@example.com')")
+                row = conn.execute(
+                    "SELECT email FROM users"
+                    " WHERE email = 'app@example.com'").fetchone()
+                self.assertEqual(row["email"], "app@example.com")
+            finally:
+                conn.close()
+
+    def test_test_mode_still_honors_test_url(self):
+        os.environ[self.MODE_VAR] = "1"
+        os.environ[self.URL_VAR] = self.URL
+        self.assertEqual(self.db_mod.test_database_url(), self.URL)
+
+    def test_sqlite_sentinel_stays_empty_in_test_mode(self):
+        os.environ[self.MODE_VAR] = "1"
+        os.environ[self.URL_VAR] = "sqlite"
+        self.assertEqual(self.db_mod.test_database_url(), "")
+
+
+class TestV12ToV13Migration(unittest.TestCase):
+    def test_existing_v12_database_migrates(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = str(Path(td) / "v12.db")
+            init_db(db)
+            conn = get_connection(db)
+            try:
+                conn.execute(
+                    "INSERT INTO users (name, role, email)"
+                    " VALUES ('Old', 'professional', 'old@example.com')")
+                conn.commit()
+                # Rewind to a v12 shape: no match tables, no new
+                # request columns, no v13 indexes, version stamped 12.
+                for index in ("idx_req_expires", "idx_req_twin",
+                              "idx_match_search", "idx_match_counter",
+                              "idx_notif_user", "idx_mq_status"):
+                    conn.execute(f"DROP INDEX IF EXISTS {index}")
+                conn.execute("DROP TABLE matches")
+                conn.execute("DROP TABLE notifications")
+                conn.execute("DROP TABLE match_queue")
+                conn.execute("ALTER TABLE requests DROP COLUMN expires_at")
+                conn.execute(
+                    "ALTER TABLE requests DROP COLUMN quantity_requested")
+                conn.execute("UPDATE schema_version SET version = 12"
+                             " WHERE id = 1")
+                conn.commit()
+            finally:
+                conn.close()
+            # Migrating must not fail on the new indexes (they
+            # reference backfilled columns) and must keep user data.
+            init_db(db)
+            conn = get_connection(db)
+            try:
+                version = conn.execute(
+                    "SELECT version FROM schema_version WHERE id = 1"
+                ).fetchone()["version"]
+                self.assertEqual(version, SCHEMA_VERSION)
+                cols = {r["name"] for r in conn.execute(
+                    "PRAGMA table_info(requests)")}
+                self.assertIn("expires_at", cols)
+                self.assertIn("quantity_requested", cols)
+                tables = {r["name"] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'")}
+                self.assertTrue({"matches", "notifications",
+                                 "match_queue", "twin_chats"} <= tables)
+                kept = conn.execute(
+                    "SELECT email FROM users"
+                    " WHERE email = 'old@example.com'").fetchone()
+                self.assertEqual(kept["email"], "old@example.com")
             finally:
                 conn.close()
 

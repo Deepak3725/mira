@@ -25,11 +25,39 @@ from .config import settings
 API_BASE = "https://api.meta.ai"
 CHAT_PATH = "/v1/chat/completions"
 MAX_HISTORY = 6
-MAX_OUTPUT_TOKENS = 300
-# Spark spends hidden reasoning tokens inside max_tokens; 600 starved a real
-# call (finish_reason "length", 598 reasoning tokens, empty content).
-MAX_JSON_OUTPUT_TOKENS = 2000
+# Spark spends hidden reasoning tokens inside max_tokens: live evidence
+# shows the 300 default starving 20/20 calls (finish_reason "length",
+# empty content), while 1500 succeeds ~85%+. The default must clear
+# the model's reasoning floor or live mode fails closed on every call.
+MAX_OUTPUT_TOKENS = 1500
+MAX_CHAT_TOKENS = 1500
+# Structured calls need more room than chats: live evidence (runs 14-15)
+# shows intent starving 4/5 at 2000 and interview succeeding only at
+# 1932/2000 tokens with ~95% reasoning overhead. The prompt already says
+# "JSON only", so the floor is model reasoning, not verbosity.
+MAX_JSON_OUTPUT_TOKENS = 4000
 TIMEOUT_SECONDS = 30
+
+
+def check_output_cap(value: int | None, *, default: int,
+                     ceiling: int = MAX_CHAT_TOKENS) -> int:
+    """Validate an explicit max_tokens override (None keeps default).
+
+    Raises ValueError before any network attempt. Only ints 1..ceiling
+    are accepted; bools, strings, floats, and out-of-range values are
+    refused so a bad cap can never reach the wire.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"max_tokens override must be an int, got"
+            f" {type(value).__name__}.")
+    if not 1 <= value <= ceiling:
+        raise ValueError(
+            f"max_tokens override must be between 1 and {ceiling},"
+            f" got {value}.")
+    return value
 
 
 class MetaNotConfigured(Exception):
@@ -60,6 +88,8 @@ class MetaResult:
     text: str
     tokens_in: int
     tokens_out: int
+    finish_reason: str | None = None
+    reasoning_tokens: int | None = None
 
 
 def build_messages(context) -> list[dict[str, str]]:
@@ -97,7 +127,36 @@ def build_messages(context) -> list[dict[str, str]]:
             "role": "assistant" if who == "me" else "user",
             "content": body[:1200],
         })
+    if not any(m["role"] == "user" for m in messages):
+        # Opening turn (empty history): the API rejects a system-only
+        # list, so the twin's first turn carries a genuine opener
+        # derived from real conversation state -- peer, purpose,
+        # topic -- telling it what discussion to open. This is the
+        # same grounding later turns get from history, not filler,
+        # and it contains no private figures (see system rules).
+        topic = ""
+        if context.opportunity:
+            topic = f" about {context.opportunity['title']}"
+        messages.append({
+            "role": "user",
+            "content": (f"{context.peer_name} has opened a "
+                        f"{context.purpose} conversation{topic}."
+                        " Greet them in character and open the"
+                        " discussion."),
+        })
     return messages
+
+
+def response_format_block(name: str, json_schema: dict) -> dict:
+    """The one structured-output envelope every Meta caller sends.
+
+    A single builder keeps the legacy and adapter paths byte-identical
+    in shape so payload drift cannot silently reintroduce rejections.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": name, "schema": json_schema},
+    }
 
 
 def _urllib_post(url: str, api_key: str, payload: dict) -> dict:
@@ -111,7 +170,17 @@ def _urllib_post(url: str, api_key: str, payload: dict) -> dict:
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        raise MetaAPIError(f"Meta API HTTP {exc.code}.") from exc
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:200]
+        except (OSError, ValueError):
+            detail = ""
+        message = f"Meta API HTTP {exc.code}."
+        if detail.strip():
+            # The server's own error text is the only offline-safe clue
+            # for diagnosing 4xx rejections (no key material here: the
+            # credential travels in the request header, never the body).
+            message = f"Meta API HTTP {exc.code}: {detail.strip()}"
+        raise MetaAPIError(message) from exc
     except (urllib.error.URLError, TimeoutError, ValueError) as exc:
         raise MetaAPIError(f"Meta API request failed: {exc}.") from exc
 
@@ -142,39 +211,100 @@ class MetaProvider:
             return None, None
         try:
             usage = data.get("usage", {})
-            return (int(usage.get("prompt_tokens")),
-                    int(usage.get("completion_tokens")))
+            if not isinstance(usage, dict):
+                return None, None
+            tokens_in = usage.get("prompt_tokens")
+            tokens_out = usage.get("completion_tokens")
+            if isinstance(tokens_in, bool) or isinstance(tokens_out, bool):
+                return None, None
+            tokens_in, tokens_out = int(tokens_in), int(tokens_out)
         except (TypeError, ValueError):
             return None, None
+        if tokens_in < 0 or tokens_out < 0:
+            return None, None
+        return tokens_in, tokens_out
+
+    @staticmethod
+    def _diagnostics(data: dict) -> tuple[str | None, int | None]:
+        """Best-effort finish reason + reasoning-token count.
+
+        Both fields are optional vendor metadata (verified shape:
+        choices[0].finish_reason, usage.completion_tokens_details.
+        reasoning_tokens). Missing or malformed values yield None --
+        never an error, never a fabricated zero.
+        """
+        finish = None
+        reasoning = None
+        try:
+            first = data["choices"][0]
+            if isinstance(first, dict):
+                finish = first.get("finish_reason")
+                if not isinstance(finish, str):
+                    finish = None
+        except (KeyError, IndexError, TypeError):
+            pass
+        try:
+            usage = data.get("usage", {})
+            details = usage.get("completion_tokens_details", {})
+            value = details.get("reasoning_tokens")
+            if isinstance(value, bool):
+                value = None
+            reasoning = int(value) if value is not None else None
+            if reasoning is not None and reasoning < 0:
+                reasoning = None
+        except (TypeError, ValueError, AttributeError):
+            pass
+        return finish, reasoning
 
     @classmethod
-    def _text_and_usage(cls, data: dict) -> tuple[str, int, int]:
+    def _text_and_usage(
+            cls, data: dict) -> tuple[str, int, int, str | None, int | None]:
         tokens_in, tokens_out = cls._reported_usage(data)
         try:
-            text = data["choices"][0]["message"]["content"]
+            first = data["choices"][0]
+            text = first["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise MetaAPIError("Meta API returned an unexpected shape.",
                                tokens_in, tokens_out) from exc
         if tokens_in is None or tokens_out is None:
             raise MetaAPIError("Meta API omitted usage accounting.",
                                tokens_in, tokens_out)
+        finish_reason, reasoning_tokens = cls._diagnostics(data)
+        truncated = finish_reason == "length"
         if not text or not text.strip():
-            raise MetaAPIError("Meta API returned an empty reply.",
-                               tokens_in, tokens_out)
-        return text.strip(), tokens_in, tokens_out
+            # "empty reply" is pinned by tests; the truncation marker
+            # distinguishes cap starvation from other empty responses.
+            message = "Meta API returned an empty reply."
+            if truncated:
+                message += " (truncated: finish_reason length)"
+            raise MetaAPIError(message, tokens_in, tokens_out)
+        if truncated:
+            # Partial content cut by the cap is not a genuine reply.
+            raise MetaAPIError(
+                "Meta API truncated the reply (finish_reason length).",
+                tokens_in, tokens_out)
+        return text.strip(), tokens_in, tokens_out, finish_reason, \
+            reasoning_tokens
 
-    def generate(self, context) -> MetaResult:
+    def generate(self, context, max_tokens: int | None = None) -> MetaResult:
         self._require_ready()
+        cap = check_output_cap(max_tokens, default=MAX_OUTPUT_TOKENS)
         payload = {
             "model": self.model,
             "messages": build_messages(context),
-            "max_tokens": MAX_OUTPUT_TOKENS,
+            "max_tokens": cap,
             "temperature": 0.7,
         }
-        data = self._post(API_BASE + CHAT_PATH, self.api_key, payload)
-        text, tokens_in, tokens_out = self._text_and_usage(data)
+        try:
+            data = self._post(API_BASE + CHAT_PATH, self.api_key, payload)
+        except OSError as exc:
+            raise MetaAPIError(f"Meta API request failed: {exc}.") from exc
+        text, tokens_in, tokens_out, finish, reasoning = \
+            self._text_and_usage(data)
         return MetaResult(text=text[:2000],
-                          tokens_in=tokens_in, tokens_out=tokens_out)
+                          tokens_in=tokens_in, tokens_out=tokens_out,
+                          finish_reason=finish,
+                          reasoning_tokens=reasoning)
 
     def generate_json(self, messages: list, json_schema: dict,
                       max_tokens: int = MAX_JSON_OUTPUT_TOKENS) -> dict:
@@ -188,11 +318,8 @@ class MetaProvider:
         payload = {
             "model": self.model,
             "messages": messages,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "need_interpretation",
-                                "schema": json_schema},
-            },
+            "response_format": response_format_block(
+                "need_interpretation", json_schema),
             "max_tokens": max_tokens,
             "temperature": 0.2,
         }
@@ -200,7 +327,8 @@ class MetaProvider:
             data = self._post(API_BASE + CHAT_PATH, self.api_key, payload)
         except OSError as exc:
             raise MetaAPIError(f"Meta API request failed: {exc}.") from exc
-        text, tokens_in, tokens_out = self._text_and_usage(data)
+        text, tokens_in, tokens_out, finish, reasoning = \
+            self._text_and_usage(data)
         try:
             parsed = json.loads(text)
         except ValueError as exc:
@@ -209,4 +337,6 @@ class MetaProvider:
         if not isinstance(parsed, dict):
             raise MetaAPIError("Meta API did not return a JSON object.",
                                tokens_in, tokens_out)
-        return {"data": parsed, "tokens_in": tokens_in, "tokens_out": tokens_out}
+        return {"data": parsed, "tokens_in": tokens_in,
+                "tokens_out": tokens_out, "finish_reason": finish,
+                "reasoning_tokens": reasoning}

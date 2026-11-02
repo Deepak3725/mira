@@ -63,6 +63,8 @@ _TABLES: list[tuple[str, list[str], list[str]]] = [
         "conditions_json TEXT NOT NULL DEFAULT '{}'",
         "status TEXT NOT NULL DEFAULT 'draft'",
         "idempotency_key TEXT NOT NULL DEFAULT ''",
+        "expires_at TEXT",
+        "quantity_requested INTEGER NOT NULL DEFAULT 1",
         "{TS_CREATED}",
         "{TS_UPDATED}",
     ], ["UNIQUE (owner_user_id, idempotency_key)"]),
@@ -219,6 +221,53 @@ _TABLES: list[tuple[str, list[str], list[str]]] = [
         "token_hash TEXT PRIMARY KEY",
         "revoked_at TEXT NOT NULL",
     ], []),
+    ("matches", [
+        "{ID}",
+        "search_request_id INTEGER NOT NULL REFERENCES requests(id)"
+        " ON DELETE CASCADE",
+        "counterpart_type TEXT NOT NULL",
+        "counterpart_id INTEGER NOT NULL",
+        "status TEXT NOT NULL DEFAULT 'potential'",
+        "owner_accepted INTEGER NOT NULL DEFAULT 0",
+        "peer_accepted INTEGER NOT NULL DEFAULT 0",
+        "score INTEGER NOT NULL DEFAULT 0",
+        "reason TEXT NOT NULL DEFAULT ''",
+        "{TS_CREATED}",
+        "{TS_UPDATED}",
+    ], ["UNIQUE (search_request_id, counterpart_type, counterpart_id)"]),
+    ("notifications", [
+        "{ID}",
+        "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE",
+        "kind TEXT NOT NULL",
+        "title TEXT NOT NULL",
+        "body TEXT NOT NULL DEFAULT ''",
+        "link TEXT NOT NULL DEFAULT ''",
+        "is_read INTEGER NOT NULL DEFAULT 0",
+        "{TS_CREATED}",
+    ], []),
+    ("match_queue", [
+        "{ID}",
+        "event_type TEXT NOT NULL",
+        "ref_type TEXT NOT NULL",
+        "ref_id INTEGER NOT NULL",
+        "status TEXT NOT NULL DEFAULT 'pending'",
+        "attempts INTEGER NOT NULL DEFAULT 0",
+        "next_retry_at TEXT",
+        "last_error TEXT NOT NULL DEFAULT ''",
+        "{TS_CREATED}",
+        "{TS_UPDATED}",
+    ], []),
+    ("twin_chats", [
+        "{ID}",
+        "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE",
+        "twin_id INTEGER NOT NULL REFERENCES twins(id) ON DELETE CASCADE",
+        "role TEXT NOT NULL",
+        "body TEXT NOT NULL",
+        "kind TEXT NOT NULL DEFAULT 'text'",
+        "ref_type TEXT NOT NULL DEFAULT ''",
+        "ref_id INTEGER NOT NULL DEFAULT 0",
+        "{TS_CREATED}",
+    ], []),
 ]
 
 _INDEXES = [
@@ -244,6 +293,13 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_outbox_acc ON outbox_messages(account_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_outbox_due ON outbox_messages(status, scheduled_for)",
     "CREATE INDEX IF NOT EXISTS idx_chevent_acc ON channel_events(account_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_req_expires ON requests(status, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_req_twin ON requests(twin_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_match_search ON matches(search_request_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_match_counter ON matches(counterpart_type, counterpart_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, is_read)",
+    "CREATE INDEX IF NOT EXISTS idx_mq_status ON match_queue(status, next_retry_at)",
+    "CREATE INDEX IF NOT EXISTS idx_twinchat_user ON twin_chats(user_id, id)",
 ]
 
 _DIALECTS = {
@@ -262,12 +318,16 @@ _DIALECTS = {
 }
 
 
-def statements(driver: str) -> list[str]:
-    """Full ordered DDL for a fresh database. Driver: sqlite | postgres."""
+def _dialect(driver: str) -> dict[str, str]:
     try:
-        dialect = _DIALECTS[driver]
+        return _DIALECTS[driver]
     except KeyError:
         raise ValueError(f"Unknown schema driver {driver!r}.") from None
+
+
+def table_statements(driver: str) -> list[str]:
+    """CREATE TABLE statements (idempotent). Driver: sqlite | postgres."""
+    dialect = _dialect(driver)
     out = []
     for name, columns, constraints in _TABLES:
         rendered = [c for c in columns]
@@ -275,5 +335,14 @@ def statements(driver: str) -> list[str]:
             rendered = [c.replace(token, replacement) for c in rendered]
         body = ", ".join(rendered + constraints)
         out.append(f"CREATE TABLE IF NOT EXISTS {name} ({body})")
-    out.extend(_INDEXES)
     return out
+
+
+def index_statements() -> list[str]:
+    """CREATE INDEX statements (idempotent, driver-agnostic)."""
+    return list(_INDEXES)
+
+
+def statements(driver: str) -> list[str]:
+    """Full ordered DDL for a fresh database. Driver: sqlite | postgres."""
+    return table_statements(driver) + index_statements()

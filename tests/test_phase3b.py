@@ -92,6 +92,7 @@ class TestCaps(BudgetCase):
 
     def test_mock_records_zero(self):
         from app import conversations as engine
+        from app.providers import MockProvider
 
         deepak = get_user_by_email(self.conn, "deepak.demo@example.com")
         karma = get_user_by_email(self.conn, "karma.demo@example.com")
@@ -100,7 +101,9 @@ class TestCaps(BudgetCase):
         cid = engine.create_conversation(
             self.conn, twin_a_id=twin_d["id"], twin_b_id=twin_k["id"],
             created_by_user_id=deepak["id"])
-        engine.step_conversation(self.conn, cid, deepak["id"])
+        # Explicit mock provider: independent of ambient AI_PROVIDER.
+        engine.step_conversation(self.conn, cid, deepak["id"],
+                                 provider=MockProvider())
         row = self.conn.execute("SELECT * FROM usage_log").fetchone()
         self.assertEqual(row["provider"], "mock")
         self.assertEqual(row["est_cost_usd"], 0.0)
@@ -130,7 +133,7 @@ class TestMetaClient(unittest.TestCase):
     def test_parses_verified_shape(self):
         def fake_post(url, key, payload):
             self.assertEqual(payload["model"], "muse-spark-1.3")
-            self.assertEqual(payload["max_tokens"], 300)
+            self.assertEqual(payload["max_tokens"], 1500)
             self.assertEqual(payload["messages"][0]["role"], "system")
             return {"choices": [{"message": {"content": "  Hello twin!  "}}],
                     "usage": {"prompt_tokens": 40, "completion_tokens": 5}}
@@ -139,6 +142,97 @@ class TestMetaClient(unittest.TestCase):
                               post=fake_post).generate(_ctx())
         self.assertEqual(result.text, "Hello twin!")
         self.assertEqual((result.tokens_in, result.tokens_out), (40, 5))
+
+    def test_diagnostics_captured_when_reported(self):
+        def detailed(url, key, payload):
+            return {"choices": [{"finish_reason": "stop",
+                                 "message": {"content": "Hi."}}],
+                    "usage": {"prompt_tokens": 10,
+                              "completion_tokens": 1150,
+                              "completion_tokens_details": {
+                                  "reasoning_tokens": 1110}}}
+
+        result = MetaProvider(model="muse-spark-1.3", api_key="k",
+                              post=detailed).generate(_ctx())
+        self.assertEqual(result.finish_reason, "stop")
+        self.assertEqual(result.reasoning_tokens, 1110)
+
+        def bare(url, key, payload):
+            return {"choices": [{"message": {"content": "Hi."}}],
+                    "usage": {"prompt_tokens": 10,
+                              "completion_tokens": 2}}
+
+        result = MetaProvider(model="muse-spark-1.3", api_key="k",
+                              post=bare).generate(_ctx())
+        self.assertIsNone(result.finish_reason)
+        self.assertIsNone(result.reasoning_tokens)
+
+    def test_generate_override_reaches_payload(self):
+        seen = []
+
+        def fake_post(url, key, payload):
+            seen.append(payload)
+            return {"choices": [{"message": {"content": "Hi."}}],
+                    "usage": {"prompt_tokens": 10,
+                              "completion_tokens": 2}}
+
+        provider = MetaProvider(model="muse-spark-1.3", api_key="k",
+                                post=fake_post)
+        provider.generate(_ctx(), max_tokens=1500)
+        self.assertEqual(seen[0]["max_tokens"], 1500)
+        for bad in (0, -1, True, 1501, "300"):
+            with self.subTest(limit=bad), self.assertRaises(ValueError):
+                provider.generate(_ctx(), max_tokens=bad)
+        self.assertEqual(len(seen), 1)
+
+    def test_truncation_detected_explicitly(self):
+        def starved(url, key, payload):
+            return {"choices": [{"finish_reason": "length",
+                                 "message": {"content": None}}],
+                    "usage": {"prompt_tokens": 200,
+                              "completion_tokens": 300}}
+
+        provider = MetaProvider(model="muse-spark-1.3", api_key="k",
+                                post=starved)
+        with self.assertRaises(MetaAPIError) as ctx:
+            provider.generate(_ctx())
+        self.assertIn("empty reply", str(ctx.exception))
+        self.assertIn("truncated", str(ctx.exception))
+        self.assertEqual((ctx.exception.tokens_in,
+                          ctx.exception.tokens_out), (200, 300))
+
+        def partial(url, key, payload):
+            return {"choices": [{"finish_reason": "length",
+                                 "message": {"content": "Half a"}}],
+                    "usage": {"prompt_tokens": 200,
+                              "completion_tokens": 300}}
+
+        provider = MetaProvider(model="muse-spark-1.3", api_key="k",
+                                post=partial)
+        with self.assertRaises(MetaAPIError) as ctx:
+            provider.generate(_ctx())
+        self.assertIn("truncated", str(ctx.exception))
+
+    def test_http_error_carries_server_detail(self):
+        import io
+        import urllib.error
+        from unittest import mock
+
+        from app import meta_client as meta_mod
+
+        def failing(req, timeout=None):
+            raise urllib.error.HTTPError(
+                req.full_url, 400, "Bad Request", {},
+                io.BytesIO(b'{"error": "bad schema"}'))
+
+        with mock.patch.object(meta_mod.urllib.request, "urlopen",
+                               side_effect=failing):
+            with self.assertRaises(MetaAPIError) as ctx:
+                meta_mod._urllib_post("https://api.meta.ai/v1/x", "k",
+                                      {"a": 1})
+        self.assertIn("HTTP 400", str(ctx.exception))
+        self.assertIn("bad schema", str(ctx.exception))
+        self.assertFalse(ctx.exception.usage_known)
 
     def test_rejects_bad_shapes(self):
         for bad in ({}, {"choices": []}, {"choices": [{"message": {"content": "  "}}]}):
@@ -157,6 +251,29 @@ class TestMetaClient(unittest.TestCase):
         self.assertEqual(len(messages), 1 + 6)  # system + last 6 turns
         self.assertIn("Python", messages[0]["content"])
         self.assertNotIn("m4", messages[0]["content"])  # at most 3 memories
+
+    def test_opening_turn_has_user_message(self):
+        ctx = _ctx(history=[],
+                   opportunity={"title": "Backend Developer"})
+        messages = build_messages(ctx)
+        roles = [m["role"] for m in messages]
+        self.assertEqual(roles, ["system", "user"])
+        self.assertIn("Backend Developer", messages[1]["content"])
+        self.assertIn("Kay", messages[1]["content"])
+        blob = " ".join(m["content"] for m in messages)
+        self.assertNotIn("budget_max", blob)
+
+    def test_later_turns_unchanged(self):
+        ctx = _ctx(history=[("peer", "Hello there"),
+                            ("me", "Hi back"),
+                            ("peer", "Know Python?")])
+        messages = build_messages(ctx)
+        self.assertEqual(
+            [(m["role"], m["content"]) for m in messages],
+            [("system", messages[0]["content"]),
+             ("user", "Hello there"),
+             ("assistant", "Hi back"),
+             ("user", "Know Python?")])
 
 
 class TestFallback(BudgetCase):

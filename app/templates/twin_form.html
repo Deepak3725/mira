@@ -35,6 +35,8 @@
     {{ share("portfolio_url", "portfolio link") }}
     <label>Bio <textarea name="bio" rows="2" maxlength="1000">{{ form.bio }}</textarea></label>
     {{ share("bio", "bio") }}
+    <label>Interests (comma-separated) <input type="text" name="interests" value="{{ form.interests }}" /></label>
+    {{ share("interests", "interests") }}
     <label>Company <input type="text" name="company" maxlength="200" value="{{ form.company }}" /></label>
     {{ share("company", "company") }}
     <label>Hiring role <input type="text" name="role_hiring" maxlength="200" value="{{ form.role_hiring }}" /></label>
@@ -59,6 +61,19 @@
   <button class="button" type="submit">{% if mode == "new" %}Create twin{% else %}Save changes{% endif %}</button>
 </form>
 {% if mode == "edit" %}
+<section class="preview-block">
+  <h2>Preview: what other twins see</h2>
+  {% if preview %}
+  <dl class="preview-list">
+    {% for key, value in preview.items() %}
+    <dt>{{ key }}</dt><dd>{{ value if value is not none else "—" }}</dd>
+    {% endfor %}
+  </dl>
+  {% else %}
+  <p class="lede">Nothing yet — tick fields above and save to share them.</p>
+  {% endif %}
+  <p class="lede">Phone and personal email never appear here.</p>
+</section>
 <form class="danger-zone" method="post" action="/twin/delete" onsubmit="return confirm('Delete your twin and its conversations? This cannot be undone.');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
   <h2>Delete twin</h2>
   <p class="lede">Type <code>delete</code> to confirm. Your account stays, but your twin and its conversations are removed.</p>

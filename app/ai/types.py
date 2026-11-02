@@ -24,17 +24,23 @@ class ProviderError(Exception):
     ``retryable`` marks failures worth retrying (429, 5xx, timeouts).
     Token usage, when the vendor reported it, is preserved so failed
     calls are still accounted; None means unknown, never zero.
+    ``uncertain_extra`` marks failures with BOTH known partial usage
+    (e.g. completed tool-loop rounds) AND an additional uncertain
+    attempt: callers must record the known part plus one conservative
+    unknown row.
     """
 
     def __init__(self, message: str, *, retryable: bool = False,
                  tokens_in: int | None = None,
                  tokens_out: int | None = None,
-                 retry_after: float | None = None):
+                 retry_after: float | None = None,
+                 uncertain_extra: bool = False):
         super().__init__(message)
         self.retryable = retryable
         self.tokens_in = tokens_in
         self.tokens_out = tokens_out
         self.retry_after = retry_after
+        self.uncertain_extra = uncertain_extra
 
     @property
     def usage_known(self) -> bool:
@@ -81,6 +87,8 @@ class AIResult:
     structured: dict[str, Any] | None = None
     tool_calls: list[ToolCall] | None = None
     mock: bool = False
+    finish_reason: str | None = None
+    reasoning_tokens: int | None = None
 
 
 class TaskKind:

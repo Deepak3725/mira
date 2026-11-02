@@ -15,15 +15,15 @@
       <label class="nav-button" for="nav-toggle" aria-hidden="true">Menu</label>
       <nav class="site-nav" aria-label="Site">
         {% set cur = request.url.path %}
-        <a href="/dashboard" class="{% if cur == '/dashboard' %}active{% endif %}">Twins</a>
-        <a href="/discover" class="{% if cur.startswith('/discover') or cur.startswith('/opportunities') %}active{% endif %}">Discover</a>
-        <a href="/requests" class="{% if cur.startswith('/requests') %}active{% endif %}">Requests</a>
-        <a href="/conversations" class="{% if cur.startswith('/conversations') %}active{% endif %}">Chats</a>
         {% if me %}
-        <a href="/voice" class="{% if cur.startswith('/voice') %}active{% endif %}">Voice</a>
+        <a href="/post" class="{% if cur.startswith('/post') %}active{% endif %}">Post Something</a>
+        <a href="/find" class="{% if cur.startswith('/find') %}active{% endif %}">Find Something</a>
+        <a href="/conversations" class="{% if cur.startswith('/conversations') %}active{% endif %}">My Conversation</a>
+        <a href="/notifications" class="{% if cur.startswith('/notifications') %}active{% endif %}">Notification</a>
+        <a href="/dashboard" class="{% if cur.startswith('/dashboard') %}active{% endif %}">Twins</a>
         <a class="user-chip {% if cur in ('/me',) or cur.startswith('/twin') or cur.startswith('/memories') or cur.startswith('/usage') %}active{% endif %}" href="/me">{{ me.name }}</a>
         {% else %}
-        <a href="/register" class="{% if cur == '/register' %}active{% endif %}">Create your twin</a>
+        <a href="/register" class="{% if cur == '/register' %}active{% endif %}">Create account</a>
         <a href="/login" class="{% if cur == '/login' %}active{% endif %}">Log in</a>
         {% endif %}
       </nav>
@@ -35,12 +35,6 @@
   <footer class="site-footer">
     <div class="container">
       <p>{{ app_name }} · Personal AI twin network · Humans stay in control.</p>
-      <nav aria-label="Footer">
-        <a href="/dashboard">Twins</a>
-        <a href="/discover">Discover</a>
-        <a href="/conversations">Chats</a>
-        {% if me %}<a href="/me">My space</a>{% else %}<a href="/login">Log in</a>{% endif %}
-      </nav>
     </div>
   </footer>
 </body>

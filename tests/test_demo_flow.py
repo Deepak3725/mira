@@ -1,6 +1,6 @@
 """One-account demo-flow tests: everything the 3:15 video needs must be
-reachable from a single logged-in demo account (Deepak), plus the honest
-prototype/roadmap split on the landing page.
+reachable from a single logged-in demo account (Deepak), plus the slim
+public landing page (no marketing roadmap, no demo data, no auto-login).
 """
 
 import os
@@ -74,22 +74,31 @@ class DemoFlowCase(unittest.TestCase):
         return f"{auth.SESSION_COOKIE}={auth.create_session(uid)}"
 
 
-class TestRoadmapSection(DemoFlowCase):
-    def test_landing_states_prototype_vs_planned(self):
+class TestLandingPage(DemoFlowCase):
+    # Product spec: the public landing is slim and functional — no
+    # marketing roadmap, no demo data, no auto-login. Logged-in
+    # visitors go straight into the app.
+    def test_anonymous_landing_is_public_and_clean(self):
         from app.routes import pages as pages_route
 
         resp = pages_route.index(_request("/"))
         self.assertEqual(resp.status_code, 200)
         body = resp.body.decode("utf-8")
-        self.assertIn("Prototype today, roadmap tomorrow", body)
-        self.assertIn("Working in this prototype", body)
-        self.assertIn("Planned next", body)
-        self.assertIn("labeled as simulated", body)
-        self.assertIn("paid AI provider", body)
-        # Core value proposition and CTA intact.
-        self.assertIn("Your personal AI twin, working with others.", body)
+        self.assertIn("Your personal AI twin", body)
         self.assertIn('href="/register"', body)
-        self.assertIn('href="/conversations"', body)
+        self.assertIn('href="/login"', body)
+        for leaked in ("deepak.demo@example.com", "Deepak",
+                       "Prototype today", "Planned next"):
+            self.assertNotIn(leaked, body)
+
+    def test_logged_in_root_redirects_to_find(self):
+        from app.routes import pages as pages_route
+
+        resp = pages_route.index(
+            _request("/", self._deepak_cookie()))
+        self.assertEqual(resp.status_code, 303)
+        self.assertTrue(
+            resp.headers["location"].endswith("/find"))
 
 
 class TestSingleAccountReach(DemoFlowCase):
@@ -109,6 +118,38 @@ class TestSingleAccountReach(DemoFlowCase):
         body = resp.body.decode("utf-8")
         self.assertIn("Backend Developer", body)
         self.assertIn("Match 85/100", body)
+
+    def test_discover_never_scores_another_twin(self):
+        # Hackathon compliance: a twin_id naming someone else's twin
+        # is ignored -- only the viewer's own twin is scored.
+        from app.routes import pages as pages_route
+
+        conn = get_connection(self.db)
+        try:
+            deepak = get_user_by_email(conn, "deepak.demo@example.com")
+            karma = get_user_by_email(conn, "karma.demo@example.com")
+            own = get_twin_by_user(conn, deepak["id"])
+            other = get_twin_by_user(conn, karma["id"])
+        finally:
+            conn.close()
+        resp = pages_route.discover(
+            _request("/discover", self._deepak_cookie()),
+            twin_id=other["id"], skills="", location="")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.body.decode("utf-8")
+        self.assertIn(own["display_name"], body)
+        self.assertNotIn("Browse as", body)
+
+    def test_anonymous_discover_shows_no_scores(self):
+        from app.routes import pages as pages_route
+
+        resp = pages_route.discover(
+            _request("/discover"), twin_id=None, skills="",
+            location="")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.body.decode("utf-8")
+        self.assertIn("Backend Developer", body)
+        self.assertNotIn("Match ", body)
 
     def test_deepak_views_job_with_owner_distinction(self):
         from app.routes import pages as pages_route

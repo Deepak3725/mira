@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Post Something — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head narrow">
+  <h1>Post Something</h1>
+  <p class="lede">Describe a need or an offer in your own words. Your twin figures out the details and finds who it fits.</p>
+</section>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+{% if not review %}
+<form class="stack-form" method="post" action="/post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <input type="hidden" name="action" value="draft" />
+  <label>What would you like to post?
+    <textarea name="description" rows="4" maxlength="4000" required placeholder="e.g. I'm hiring a full-stack developer for my team in Bhutan.">{{ draft }}</textarea>
+  </label>
+  <button class="button" type="submit">Review</button>
+</form>
+{% else %}
+<section class="card" aria-label="Review your post">
+  <h2>Review before publishing</h2>
+  <dl class="review-list">
+    <div><dt>Type</dt><dd>{{ "Offer" if review.kind == "offer" else "Need" }}</dd></div>
+    <div><dt>Title</dt><dd>{{ review.title }}</dd></div>
+    {% if review.location %}<div><dt>Location</dt><dd>{{ review.location }}</dd></div>{% endif %}
+    {% if review.skills %}<div><dt>Skills</dt><dd>{{ review.skills | join(", ") }}</dd></div>{% endif %}
+    {% if review.when_text %}<div><dt>When</dt><dd>{{ review.when_text }}</dd></div>{% endif %}
+  </dl>
+  <p class="lede">{{ review.description }}</p>
+</section>
+<form class="stack-form" method="post" action="/post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <input type="hidden" name="action" value="publish" />
+  <input type="hidden" name="description" value="{{ review.description }}" />
+  <input type="hidden" name="category" value="{{ review.category }}" />
+  <div class="form-grid">
+    <label>Title <input type="text" name="title" maxlength="200" value="{{ review.title }}" required /></label>
+    <label>Type
+      <select name="kind">
+        <option value="need" {% if review.kind != "offer" %}selected{% endif %}>Need</option>
+        <option value="offer" {% if review.kind == "offer" %}selected{% endif %}>Offer</option>
+      </select>
+    </label>
+    <label>Location <input type="text" name="location" maxlength="120" value="{{ review.location }}" /></label>
+    <label>Skills (comma-separated) <input type="text" name="skills" value="{{ review.skills_text }}" /></label>
+    {% if review.kind != "offer" %}
+    <label>How many do you need? <input type="number" name="quantity" min="1" max="99" value="{{ review.quantity }}" /></label>
+    {% endif %}
+  </div>
+  <div class="actions">
+    <button class="button" type="submit">Publish</button>
+    <a class="button secondary" href="/post">Start over</a>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

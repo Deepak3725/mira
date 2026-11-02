@@ -56,6 +56,15 @@
   <label>To <input type="text" name="destination" maxlength="120" value="{{ current.destination or '' }}" /></label>
   <label>When <input type="text" name="when" maxlength="120" value="{{ current.when_text or '' }}" placeholder="e.g. tomorrow at 9 AM" /></label>
   <label>Skills / tags (comma-separated) <input type="text" name="skills" value="{{ (current.skills or []) | join(', ') }}" /></label>
+  {% if req.expires_at %}<p class="form-note">Parsed deadline: {{ req.expires_at }} UTC — pick a duration to change it, or “No deadline” to keep it.</p>{% endif %}
+  <label>How long should your twin search?
+    <select name="duration">
+      {% for name, minutes in durations %}
+      <option value="{{ name }}" {% if name == picked_duration %}selected{% endif %}>{% if name == "none" %}No deadline{% elif name == "1h" %}1 hour{% elif name == "2h" %}2 hours{% elif name == "5h" %}5 hours{% elif name == "1d" %}1 day{% elif name == "1w" %}1 week{% else %}{{ name }}{% endif %}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>How many matches do you need? <input type="number" name="quantity" min="1" max="100" value="{{ picked_quantity }}" /></label>
   <button class="button" type="submit">Confirm &amp; find providers</button>
 </form>
 {% endblock %}

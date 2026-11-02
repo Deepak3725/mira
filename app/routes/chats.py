@@ -122,12 +122,20 @@ def convo_detail(request: Request, conv_id: int):
                 " WHERE conv_id = ? ORDER BY id DESC LIMIT 20", (conv_id,)))
             if owner else []
         )
+        can_see_request = False
+        if conv["request_id"] and uid is not None:
+            from ..db import get_request as _get_request
+
+            linked = _get_request(conn, conv["request_id"])
+            can_see_request = (
+                linked is not None and linked["owner_user_id"] == uid)
         view = {
             "id": conv["id"], "status": conv["status"], "purpose": conv["purpose"],
             "turn": conv["turn"], "max_turns": conv["max_turns"],
             "is_demo": bool(conv["is_demo"]), "opp_title": conv["opp_title"],
             "opportunity_id": conv["opportunity_id"],
             "request_id": conv["request_id"], "req_category": conv["req_category"],
+            "can_see_request": can_see_request,
             "name_a": conv["name_a"], "name_b": conv["name_b"],
             "seed_a": conv["seed_a"], "seed_b": conv["seed_b"],
             "owner_a_name": conv["owner_a_name"], "owner_b_name": conv["owner_b_name"],
@@ -252,9 +260,10 @@ def _act(request: Request, conv_id: int, action: str, csrf_token: str = "", **kw
                     raise engine.ConversationError("Owners only.")
                 if conv["purpose"] == "service" and conv["request_id"]:
                     text = engine.generate_service_summary(conn, conv_id)
-                elif conv["purpose"] == "recruitment" and conv["opportunity_id"]:
-                    text = engine.generate_recommendation(conn, conv_id)
                 else:
+                    # NOTE (hackathon compliance): the recruitment
+                    # verdict summary was removed; twins never assess
+                    # applicants. Service chats keep their summary.
                     raise engine.ConversationError("Nothing to summarize.")
                 conn.execute(
                     "INSERT INTO messages (conv_id, sender, body, provider)"

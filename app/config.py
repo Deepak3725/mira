@@ -89,6 +89,11 @@ class Settings:
     # credentials. Off by default everywhere; enable only on an isolated
     # demo/development database, never on a production user database.
     demo_mode: bool = False
+    # Deadline/match-queue sweeper (MIRA_WORKER=0 disables). Inline
+    # post-save matching never depends on it; only expirations and
+    # failed-event retries do. Single-process only: run one worker.
+    worker_enabled: bool = True
+    worker_interval_seconds: int = 30
 
 
 def get_settings() -> Settings:
@@ -115,6 +120,8 @@ def get_settings() -> Settings:
         budget_per_conversation_usd=_float_env("BUDGET_PER_CONVERSATION_USD", 1.0),
         budget_per_user_daily_usd=_float_env("BUDGET_PER_USER_DAILY_USD", 5.0),
         demo_mode=_bool_env("MIRA_DEMO_MODE", False),
+        worker_enabled=_bool_env("MIRA_WORKER", True),
+        worker_interval_seconds=_int_env("MIRA_WORKER_INTERVAL", 30),
     )
 
 

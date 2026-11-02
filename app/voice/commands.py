@@ -78,7 +78,15 @@ _REJECT_MEM = re.compile(r"\b(reject|delete|remove|forget)\b.{0,20}?"
 _OPPORTUNITIES = re.compile(r"\bopportunit|\bjob openings?\b"
                             r"|\bgigs?\b", re.IGNORECASE)
 _FIND = re.compile(r"\bfind\b", re.IGNORECASE)
-_NEED = re.compile(r"^\s*i\s+need\b", re.IGNORECASE)
+_NEED = re.compile(
+    r"^\s*i\s+need\b"
+    r"|\bpost\b.{0,12}?\b(that\s+)?i(\s+am|'m)\b"
+    r"|\bpost\b.{0,12}?\bthat\s+i\s+(need|want)\b"
+    r"|\bi(\s+am|'m)\s+looking\s+for\b",
+    re.IGNORECASE)
+_POST_PREFIX = re.compile(
+    r"^.*?post\s+(that\s+)?(?=i(\s+am|'m|\s+need|\s+want)\b)",
+    re.IGNORECASE)
 _MY_CHATS = re.compile(r"\b(my\s+)?(chats|conversations)\b",
                        re.IGNORECASE)
 _UPDATE_OP = re.compile(
@@ -230,8 +238,10 @@ def parse_command(text: str) -> dict:
         return {"kind": "reject_mem",
                 "slots": _mem_number(cleaned),
                 "missing": [], "raw": cleaned}
-    if _NEED.match(cleaned):
-        return {"kind": "need", "slots": {"text": cleaned},
+    if _NEED.search(cleaned):
+        # "Post that I'm looking for X" posts X, not the wrapper.
+        text = _POST_PREFIX.sub("", cleaned).strip()
+        return {"kind": "need", "slots": {"text": text or cleaned},
                 "missing": [], "raw": cleaned}
     if _OPPORTUNITIES.search(cleaned):
         query = _opp_query(cleaned)

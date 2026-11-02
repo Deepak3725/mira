@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -23,6 +24,7 @@ from .routes import (
     pages,
     projects,
     requests,
+    twin,
     voice,
 )
 
@@ -43,12 +45,58 @@ def check_production_settings() -> None:
         raise RuntimeError("DATABASE_URL must be set in production.")
 
 
+def _sweep_forever(stop, interval: float) -> None:
+    """Deadline + match-queue sweeper. Matches never wait for this —
+    post-save processing is inline; the sweep only expires searches
+    and retries failed events. One worker per deployment."""
+    from .db import get_connection
+    from .matcher import now_stamp, process_due
+
+    log = get_logger()
+    while not stop.wait(interval):
+        conn = None
+        try:
+            conn = get_connection()
+            counts = process_due(conn, now_stamp())
+            if counts["expired"] or counts["failed"] or counts["matches"]:
+                log.info("sweep", extra=counts)
+        except Exception as exc:  # noqa: BLE001 - sweeper never dies
+            log.warning("sweep failed", extra={"error": str(exc)[:200]})
+        finally:
+            if conn is not None:
+                conn.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     check_production_settings()
     configure_stderr()
+    import os as _os
+    import threading as _threading
+
+    from .db import test_mode_active as _test_mode
+
+    if not _test_mode() and _os.environ.get(
+            "MIRA_TEST_DATABASE_URL", "").strip().lower() not in ("", "sqlite"):
+        # Never print the value (it may hold credentials): the redirect
+        # is test-only, so the server ignores it and says so once.
+        get_logger().warning(
+            "ignoring test-only MIRA_TEST_DATABASE_URL outside test mode")
     init_db()
-    yield
+    stop = _threading.Event()
+    worker = None
+    if settings.worker_enabled:
+        worker = _threading.Thread(
+            target=_sweep_forever,
+            args=(stop, max(5, settings.worker_interval_seconds)),
+            name="mira-sweeper", daemon=True)
+        worker.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        if worker is not None:
+            worker.join(timeout=5)
 
 
 def _docs_kwargs() -> dict:
@@ -115,15 +163,34 @@ app.middleware("http")(security_headers)
 
 
 def _error_page(status: int, title: str) -> HTMLResponse:
+    # Styled like the app without needing request context; never leaks
+    # tracebacks or internals.
     return HTMLResponse(
-        f"<!doctype html><html><head><title>{status} — {title}</title></head>"
-        f"<body><h1>{status} — {title}</h1>"
-        f"<p><a href=\"/\">Back to {settings.app_name}</a></p></body></html>",
+        "<!doctype html><html lang=\"en\"><head>"
+        "<meta charset=\"utf-8\" />"
+        "<meta name=\"viewport\" content=\"width=device-width,"
+        " initial-scale=1\" />"
+        f"<title>{status} — {title}</title>"
+        "<link rel=\"stylesheet\" href=\"/static/css/style.css\" />"
+        "</head><body>"
+        "<header class=\"site-header\"><div class=\"container"
+        " header-inner\">"
+        f"<a class=\"brand\" href=\"/\">{settings.app_name}</a>"
+        "</div></header>"
+        "<main class=\"container\">"
+        f"<h1>{status} — {title}</h1>"
+        f"<p class=\"lede\"><a href=\"/\">Back to"
+        f" {settings.app_name}</a></p>"
+        "</main></body></html>",
         status_code=status,
     )
 
 
+# NOTE: fastapi.HTTPException and starlette.HTTPException are distinct
+# classes in this stack, and router 404s raise the starlette one. The
+# handler is registered for both so error pages always render as HTML.
 @app.exception_handler(HTTPException)
+@app.exception_handler(StarletteHTTPException)
 async def _http_errors(request: Request, exc: HTTPException) -> HTMLResponse:
     if exc.status_code == 404:
         return _error_page(404, "Not found")
@@ -147,4 +214,5 @@ app.include_router(requests.router)
 app.include_router(pages.router)
 app.include_router(projects.router)
 app.include_router(channels.router)
+app.include_router(twin.router)
 app.include_router(voice.router)

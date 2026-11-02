@@ -18,7 +18,7 @@ from ..types import (
     ProviderNotConfigured,
     ToolCall,
 )
-from .base import BaseAdapter
+from .base import BaseAdapter, strict_usage
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
@@ -59,12 +59,8 @@ class AnthropicAdapter(BaseAdapter):
 
     @staticmethod
     def _usage(data: dict) -> tuple[int, int]:
-        try:
-            usage = data.get("usage", {}) or {}
-            return (int(usage.get("input_tokens", 0)),
-                    int(usage.get("output_tokens", 0)))
-        except (TypeError, ValueError):
-            return 0, 0
+        return strict_usage(data, "usage", "input_tokens",
+                            "output_tokens", "Anthropic")
 
     @staticmethod
     def _blocks(data: dict) -> list:
@@ -132,7 +128,15 @@ class AnthropicAdapter(BaseAdapter):
             if system:
                 payload["system"] = system
             data = self._post(API_URL, payload, self._headers())
-            tok_in, tok_out = self._usage(data)
+            try:
+                tok_in, tok_out = self._usage(data)
+            except ProviderError as exc:
+                # Earlier rounds parsed fine: keep their real usage
+                # and flag this round uncertain (mirrors Meta).
+                raise ProviderError(
+                    str(exc), tokens_in=total_in,
+                    tokens_out=total_out,
+                    uncertain_extra=True) from exc
             total_in += tok_in
             total_out += tok_out
             blocks = self._blocks(data)
@@ -160,4 +164,5 @@ class AnthropicAdapter(BaseAdapter):
                                                       default=str)[:4000]})
             thread.append({"role": "user", "content": results})
         raise ProviderError("Anthropic API: tool loop did not finish in"
-                            f" {MAX_TOOL_ROUNDS} rounds.")
+                            f" {MAX_TOOL_ROUNDS} rounds.",
+                            tokens_in=total_in, tokens_out=total_out)

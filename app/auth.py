@@ -1,7 +1,8 @@
 """Minimal local-demo authentication (standard library only).
 
 - Passwords: PBKDF2-HMAC-SHA256, 200k iterations, per-user random salt.
-- Sessions: stateless HMAC-signed cookies (user_id:expiry:signature).
+- Sessions: stateless HMAC-signed cookies
+  (user_id:expiry:nonce:signature), plus a revoked-sessions table.
 - Rate limiting: in-memory sliding window per key.
 
 Honest limits: fine for a local hackathon demo with a small audience; this
@@ -21,6 +22,15 @@ from .config import settings
 SESSION_COOKIE = "mira_session"
 SESSION_TTL_SECONDS = 7 * 24 * 3600
 _PBKDF2_ITERATIONS = 200_000
+#: Fixed dummy hash for unknown accounts: verifying against it keeps
+#: login timing uniform (missing account vs wrong password). It matches
+#: no real password and is never stored.
+DUMMY_HASH = (
+    "pbkdf2$200000$"
+    "00000000000000000000000000000000$"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+)
+
 #: Passwords longer than this are rejected before hashing (PBKDF2 over
 #: unbounded input is a CPU-DoS vector). 128 chars is ample for passphrases.
 MAX_PASSWORD_LENGTH = 128
@@ -59,14 +69,28 @@ def _sign(payload: str) -> str:
 
 
 def create_session(user_id: int, ttl: int = SESSION_TTL_SECONDS) -> str:
-    payload = f"{user_id}:{int(time.time()) + ttl}"
+    # The random nonce makes every login unique: without it the token
+    # was f(user_id, second), so a logout followed by a same-second
+    # re-login re-minted the just-revoked token and locked the user
+    # out until the clock ticked over.
+    payload = (f"{user_id}:{int(time.time()) + ttl}:"
+               f"{secrets.token_hex(16)}")
     return f"{payload}:{_sign(payload)}"
 
 
 def parse_session(value: str | None) -> int | None:
     try:
-        user_id, expiry, sig = (value or "").split(":")
-        if not hmac.compare_digest(_sign(f"{user_id}:{expiry}"), sig):
+        parts = (value or "").split(":")
+        if len(parts) == 4:
+            user_id, expiry, _nonce, sig = parts
+            signed = ":".join(parts[:3])
+        elif len(parts) == 3:
+            # Legacy pre-nonce sessions stay valid until they expire.
+            user_id, expiry, sig = parts
+            signed = f"{user_id}:{expiry}"
+        else:
+            return None
+        if not hmac.compare_digest(_sign(signed), sig):
             return None
         if int(expiry) < time.time():
             return None

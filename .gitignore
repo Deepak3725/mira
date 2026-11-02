@@ -28,6 +28,8 @@ __pycache__/
 # Scratch / temp / workflow residue
 tmp*/
 wf_*/
+# Redirected test temp (see tests/__init__.py)
+/.tmp_tests/
 
 # Logs and local generated artifacts
 *.log

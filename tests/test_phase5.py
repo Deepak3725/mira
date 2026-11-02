@@ -16,7 +16,12 @@ from app.db import (
     update_twin,
     visible_twins,
 )
-from app.seed import seed_demo_conversation, seed_demo_data, seed_demo_opportunities
+from app.seed import (
+    SEED_USERS,
+    seed_demo_conversation,
+    seed_demo_data,
+    seed_demo_opportunities,
+)
 
 
 class VisibilityCase(unittest.TestCase):
@@ -37,7 +42,7 @@ class VisibilityCase(unittest.TestCase):
 class TestVisibility(VisibilityCase):
     def test_seeds_public_to_anonymous(self):
         rows = visible_twins(self.conn, None)
-        self.assertEqual(len(rows), 4)
+        self.assertEqual(len(rows), len(SEED_USERS))
 
     def test_private_hidden_from_others_visible_to_owner(self):
         uid = create_user(self.conn, name="Zed", role="professional",
@@ -131,8 +136,10 @@ class TestPublicOnlyMatching(VisibilityCase):
         self.assertIsNone(seeker.location)
         self.assertIsNone(seeker.experience_years)
 
-    def test_recommendation_ignores_private_fields(self):
-        from app.db import create_opportunity, update_twin
+    def test_discovery_scoring_ignores_private_fields(self):
+        from app.db import get_twin, update_twin
+        from app.matching import SeekerProfile, score_opportunity
+        from app.privacy import twin_public_view
 
         twin = self._private_twin()
         update_twin(self.conn, twin["id"], display_name=twin["display_name"],
@@ -141,19 +148,14 @@ class TestPublicOnlyMatching(VisibilityCase):
                              "experience_years": 5, "location": "Secretville"},
                     authorized_fields=[])
         self.conn.commit()
-        opp_id = create_opportunity(
-            self.conn, owner_user_id=self.deepak["id"], title="PyRole",
-            required_skills=["Python", "GraphQL"], preferred_experience_years=2,
-            location="Thimphu")
-        deepak_twin = get_twin_by_user(self.conn, self.deepak["id"])
-        cid = engine.create_conversation(
-            self.conn, twin_a_id=twin["id"], twin_b_id=deepak_twin["id"],
-            created_by_user_id=twin["user_id"], opportunity_id=opp_id,
-            purpose="recruitment")
-        text = engine.generate_recommendation(self.conn, cid)
+        twin = get_twin(self.conn, twin["id"])
         # Nothing authorized: zero coverage, zero private leakage.
-        self.assertIn("0 of 2 required", text)
-        self.assertNotIn("Secretville", text)
+        match = score_opportunity(
+            SeekerProfile.from_profile(twin_public_view(twin)),
+            required_skills=["Python", "GraphQL"],
+            preferred_years=2, location="Thimphu", remote_ok=False)
+        self.assertEqual(match.matching_skills, ())
+        self.assertNotIn("Secretville", match.explanation)
 
 
 class TestInitiatorOwnership(VisibilityCase):

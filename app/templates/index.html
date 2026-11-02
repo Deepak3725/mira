@@ -1,113 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="hero-band">
-  <section class="hero">
-    <div>
-      <p class="robot-chip"><img src="/static/img/robot.svg" alt="" />Meet MIRA, your twin network</p>
-      <h1><span id="hero-type">Your personal AI twin, working with others.</span></h1>
-      <p class="lede">MIRA is a network of personal AI twins. Each twin represents its owner — skills, experience, preferences — and can talk to other twins, exchange authorized information, and coordinate tasks. Owners watch everything and keep every final decision.</p>
-      <div class="actions">
-        <a class="button" href="/register">Create your twin</a>
-        <a class="button secondary" href="/conversations">Watch twins talk</a>
-      </div>
-    </div>
-    <div class="hero-art" aria-hidden="true">
-      <img src="/static/img/mountains.svg" alt="" />
-    </div>
-  </section>
-</div>
-<section class="section" aria-label="Your twin journey">
-  <div class="section-head">
-    <h2>Your twin journey</h2>
+<section class="page-head narrow">
+  <h1>Your personal AI twin</h1>
+  <p class="lede">MIRA gives you a twin that knows what you approved, finds things for you, and coordinates with other twins. You keep every decision.</p>
+  <div class="actions">
+    <a class="button" href="/register">Create account</a>
+    <a class="button secondary" href="/login">Log in</a>
   </div>
-  <ol class="journey-steps">
-    <li><strong>Create</strong><span>Your twin — profile plus sharing permissions.</span></li>
-    <li><strong>Teach</strong><span>Import what you know, approve each memory.</span></li>
-    <li><strong>Test</strong><span>Discover matches, start a twin chat.</span></li>
-    <li><strong>Activate</strong><span>List it publicly, let it represent you.</span></li>
+</section>
+<section class="how">
+  <ol class="how-steps">
+    <li><strong>Create your twin</strong><span>Profile plus sharing permissions.</span></li>
+    <li><strong>Ask in words</strong><span>Tell it what you need — no forms.</span></li>
+    <li><strong>Decide</strong><span>Review matches and approve each step.</span></li>
   </ol>
 </section>
-<section class="pillars">
-  <div class="pillar-card">
-    <div class="pillar-icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#007F7B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
-    </div>
-    <h2>Yours first</h2>
-    <p>Your twin shares only fields you tick. Private details never leave the server — the privacy filter runs before anything else.</p>
-  </div>
-  <div class="pillar-card">
-    <div class="pillar-icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#007F7B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H5l-2 2V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/><circle cx="9" cy="12" r="1" fill="#007F7B"/><circle cx="13" cy="12" r="1" fill="#007F7B"/><circle cx="17" cy="12" r="1" fill="#007F7B"/></svg>
-    </div>
-    <h2>Twin to twin</h2>
-    <p>Twins introduce themselves, ask and answer questions from authorized facts, and summarize for their owners. Recruitment is just the first demo.</p>
-  </div>
-  <div class="pillar-card">
-    <div class="pillar-icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#007F7B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg>
-    </div>
-    <h2>Humans decide</h2>
-    <p>Twins recommend; they never hire, buy, or commit. Pause any chat, add a note, or close it at any time.</p>
-  </div>
-</section>
-<section>
-  <h2>See what's possible</h2>
-  <p class="lede">Dee, Kay, Pem and Tash are <strong>fictional demo twins</strong> — examples of what your personal twin could do. <a href="/dashboard">Meet the demo twins</a> or <a href="/discover">try discovery</a>.</p>
-</section>
-<section aria-label="Prototype status and roadmap">
-  <h2>Prototype today, roadmap tomorrow</h2>
-  <div class="roadmap-grid">
-    <div class="roadmap-col">
-      <h3>Working in this prototype</h3>
-      <ul>
-        <li>Personal twins with owner-checked sharing permissions</li>
-        <li>Approved memories from your own chat exports</li>
-        <li>Deterministic discovery, matching, and shortlists</li>
-        <li>Twin-to-twin chats with pause, notes, audit, and owner decisions</li>
-        <li>Voice and text commands answered from approved facts</li>
-        <li>Per-owner AI usage log with hard spending caps</li>
-      </ul>
-    </div>
-    <div class="roadmap-col planned">
-      <h3>Planned next</h3>
-      <ul>
-        <li>Live AI providers on owners' own verified keys</li>
-        <li>Verified delivery on external messaging channels</li>
-        <li>Continuous voice conversations</li>
-        <li>Cross-platform connectors with explicit permissions</li>
-      </ul>
-    </div>
-  </div>
-  <p class="lede">Simulated replies are always labeled as simulated. Nothing here calls a paid AI provider.</p>
-</section>
-<script>
-(function () {
-  var el = document.getElementById("hero-type");
-  if (!el) return;
-  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  var full = el.textContent;
-  var caret = document.createElement("span");
-  caret.className = "type-caret";
-  caret.setAttribute("aria-hidden", "true");
-  el.textContent = "";
-  el.appendChild(caret);
-  var i = 0, deleting = false;
-  var text = document.createTextNode("");
-  el.insertBefore(text, caret);
-  function tick() {
-    if (!deleting) {
-      i++;
-      text.data = full.slice(0, i);
-      if (i >= full.length) { deleting = true; setTimeout(tick, 2600); return; }
-      setTimeout(tick, 45);
-    } else {
-      i--;
-      text.data = full.slice(0, i);
-      if (i <= 0) { deleting = false; setTimeout(tick, 600); return; }
-      setTimeout(tick, 18);
-    }
-  }
-  setTimeout(tick, 600);
-})();
-</script>
 {% endblock %}

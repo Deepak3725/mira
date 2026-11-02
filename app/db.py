@@ -12,7 +12,10 @@ adds the project-execution tables (projects, project_tasks,
 project_files, project_events). Version 11 adds the messaging
 tables (channel_accounts, channel_contacts, outbox_messages,
 channel_events). Version 12 adds revoked_sessions so logout
-really invalidates sessions. All helpers accept an optional
+really invalidates sessions. Version 13 adds persistent search
+(``requests.expires_at`` / ``requests.quantity_requested``) plus the
+``matches``, ``notifications``, and ``match_queue`` tables for
+event-driven matching. All helpers accept an optional
 ``path`` so tests can use a temporary database file.
 """
 
@@ -29,7 +32,7 @@ from typing import Any
 from . import schema as app_schema
 from .config import settings
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 14
 
 
 #: Columns added after the initial schema. Every entry's DDL must be
@@ -47,6 +50,8 @@ _ENSURE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("usage_log", "attempts", "INTEGER NOT NULL DEFAULT 1"),
     ("memories", "category", "TEXT NOT NULL DEFAULT 'general'"),
     ("memories", "source_time", "TEXT"),
+    ("requests", "expires_at", "TEXT"),
+    ("requests", "quantity_requested", "INTEGER NOT NULL DEFAULT 1"),
 )
 
 
@@ -127,11 +132,31 @@ def driver_name(conn) -> str:
 TEST_SCHEMA = "mira_test"
 
 
+#: Marker the test-suite bootstrap (``tests/__init__.py``) sets so the
+#: application can tell test runs apart from the real server. The
+#: Postgres test redirect below must NEVER fire for the app itself:
+#: ``MIRA_TEST_DATABASE_URL`` once leaked from ``.env`` into the
+#: running server, which then read the shared test schema (wiped by
+#: boot-time ``init_db``) instead of ``data/mira.db`` — demo login
+#: failed and every DB-backed page 500'd on any Postgres hiccup.
+TEST_MODE_ENV_VAR = "MIRA_TEST_MODE"
+
+
+def test_mode_active() -> bool:
+    """True only inside a test-suite process (marker set by bootstrap)."""
+    return os.environ.get(TEST_MODE_ENV_VAR, "").strip() == "1"
+
+
 def test_database_url() -> str:
     """PostgreSQL URL for the test suite.
 
     Empty — or the explicit sentinel ``sqlite`` — means SQLite test files.
+    Outside test mode this always returns ``""``: the app server, seed
+    scripts, and CLIs ignore the test-only variable even when it leaks
+    in from ``.env`` or the shell.
     """
+    if not test_mode_active():
+        return ""
     value = os.environ.get("MIRA_TEST_DATABASE_URL", "").strip()
     if value.lower() == "sqlite":
         return ""
@@ -276,13 +301,20 @@ def _init_postgres(url: str, schema: str | None) -> None:
     conn = _pg_connection(url, None)
     try:
         if schema:
+            # Tests only: schema is the constant TEST_SCHEMA passed by
+            # init_db's test branch. Production passes None and never
+            # drops anything.
             conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
             conn.execute(f"CREATE SCHEMA {schema}")
             conn.execute(f"SET search_path TO {schema}, public")
-        for statement in app_schema.statements("postgres"):
+        # Tables, then backfill columns, then indexes: indexes may
+        # reference backfilled columns on pre-existing databases.
+        for statement in app_schema.table_statements("postgres"):
             conn.execute(statement)
         for table, column, ddl in _ENSURE_COLUMNS:
             _ensure_column(conn, table, column, ddl)
+        for statement in app_schema.index_statements():
+            conn.execute(statement)
         conn.execute(
             "INSERT INTO schema_version (id, version) VALUES (1, ?)"
             " ON CONFLICT(id) DO UPDATE SET version=excluded.version",
@@ -304,10 +336,14 @@ def init_db(path: Path | str | None = None) -> Path:
     target = _resolve(path)
     conn = get_connection(target)
     try:
-        for statement in app_schema.statements("sqlite"):
+        # Tables, then backfill columns, then indexes: indexes may
+        # reference backfilled columns on pre-existing databases.
+        for statement in app_schema.table_statements("sqlite"):
             conn.execute(statement)
         for table, column, ddl in _ENSURE_COLUMNS:
             _ensure_column(conn, table, column, ddl)
+        for statement in app_schema.index_statements():
+            conn.execute(statement)
         conn.execute(
             "INSERT INTO schema_version (id, version) VALUES (1, ?)"
             " ON CONFLICT(id) DO UPDATE SET version=excluded.version",
@@ -531,6 +567,28 @@ def list_opportunities(
     return list(conn.execute(query, params))
 
 
+def update_opportunity(conn: Connection, opp_id: int, **fields) -> None:
+    """Update an offer. Callers enforce ownership. Allowed keys: title,
+    description, required_skills (list), preferred_experience_years,
+    location, remote_ok, status, category, attributes (dict)."""
+    if "required_skills" in fields:
+        fields["required_skills_json"] = json.dumps(
+            fields.pop("required_skills") or [])
+    if "attributes" in fields:
+        fields["attributes_json"] = json.dumps(fields.pop("attributes")
+                                               or {})
+    allowed = {"title", "description", "required_skills_json",
+               "preferred_experience_years", "location", "remote_ok",
+               "status", "category", "attributes_json"}
+    sets = [f"{key} = ?" for key in fields if key in allowed]
+    if not sets:
+        return
+    params = [fields[key.split(" = ")[0]] for key in sets]
+    params.append(opp_id)
+    conn.execute(f"UPDATE opportunities SET {', '.join(sets)} WHERE id = ?",
+                 params)
+
+
 def set_twin_conditions(conn: Connection, twin_id: int, conditions: dict) -> None:
     conn.execute("UPDATE twins SET conditions_json = ? WHERE id = ?",
                  (json.dumps(conditions), twin_id))
@@ -546,15 +604,18 @@ def create_request(
     requirements: dict | None = None,
     conditions: dict | None = None,
     idempotency_key: str,
+    expires_at: str | None = None,
+    quantity_requested: int = 1,
 ) -> int:
     return insert_returning_id(
         conn,
         "INSERT INTO requests (twin_id, owner_user_id, category, need_text,"
-        " requirements_json, conditions_json, status, idempotency_key)"
-        " VALUES (?, ?, ?, ?, ?, ?, 'draft', ?)",
+        " requirements_json, conditions_json, status, idempotency_key,"
+        " expires_at, quantity_requested)"
+        " VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)",
         (twin_id, owner_user_id, category, need_text,
          json.dumps(requirements or {}), json.dumps(conditions or {}),
-         idempotency_key),
+         idempotency_key, expires_at, quantity_requested),
     )
 
 
@@ -586,15 +647,280 @@ def list_requests_for_user(conn: Connection, user_id: int) -> list[Row]:
     ))
 
 
+def list_shared_requests(conn: Connection, *, exclude_user_id: int | None = None,
+                         limit: int = 200) -> list[Row]:
+    """Others' discoverable need posts (drafts/closed stay private).
+
+    Only statuses in SHARED_STATUSES surface; the caller's own user id
+    is excluded so a twin never "discovers" its owner's needs. Newest
+    first. Callers must still strip private requirement fields (see
+    matching.provider_summary_for_peer) before display.
+    """
+    from .requests import SHARED_STATUSES
+
+    placeholders = ", ".join("?" for _ in SHARED_STATUSES)
+    query = (
+        "SELECT requests.*, twins.display_name AS twin_name,"
+        " twins.avatar_seed AS twin_avatar_seed,"
+        " users.name AS owner_name, users.role AS owner_role"
+        " FROM requests"
+        " JOIN twins ON twins.id = requests.twin_id"
+        " JOIN users ON users.id = requests.owner_user_id"
+        f" WHERE requests.status IN ({placeholders})"
+    )
+    params: list = list(SHARED_STATUSES)
+    if exclude_user_id is not None:
+        query += " AND requests.owner_user_id != ?"
+        params.append(exclude_user_id)
+    query += " ORDER BY requests.updated_at DESC, requests.id DESC LIMIT ?"
+    params.append(max(1, min(2000, limit)))
+    return list(conn.execute(query, params))
+
+
+def list_active_searches(conn: Connection, limit: int = 500) -> list[Row]:
+    """Search requests still eligible for matching (shared statuses)."""
+    from .requests import SHARED_STATUSES
+
+    placeholders = ", ".join("?" for _ in SHARED_STATUSES)
+    return list(conn.execute(
+        "SELECT requests.*, twins.display_name AS twin_name FROM requests"
+        " JOIN twins ON twins.id = requests.twin_id"
+        f" WHERE requests.status IN ({placeholders})"
+        " ORDER BY requests.updated_at DESC, requests.id DESC LIMIT ?",
+        (*SHARED_STATUSES, max(1, min(5000, limit))),
+    ))
+
+
+def get_match(conn: Connection, match_id: int) -> Row | None:
+    return conn.execute(
+        "SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+
+
+def get_match_by_pair(conn: Connection, search_request_id: int,
+                      counterpart_type: str, counterpart_id: int) -> Row | None:
+    return conn.execute(
+        "SELECT * FROM matches WHERE search_request_id = ?"
+        " AND counterpart_type = ? AND counterpart_id = ?",
+        (search_request_id, counterpart_type, counterpart_id)).fetchone()
+
+
+def create_match(conn: Connection, *, search_request_id: int,
+                 counterpart_type: str, counterpart_id: int,
+                 score: int = 0, reason: str = "") -> int | None:
+    """Insert a potential match; None when the pair already exists."""
+    try:
+        return insert_returning_id(
+            conn,
+            "INSERT INTO matches (search_request_id, counterpart_type,"
+            " counterpart_id, status, score, reason)"
+            " VALUES (?, ?, ?, 'potential', ?, ?)",
+            (search_request_id, counterpart_type, counterpart_id,
+             score, reason[:500]),
+        )
+    except DUPLICATE_ERRORS:
+        return None
+
+
+def update_match(conn: Connection, match_id: int, **fields) -> None:
+    allowed = {"status", "owner_accepted", "peer_accepted", "score",
+               "reason"}
+    sets = [f"{key} = ?" for key in fields if key in allowed]
+    if not sets:
+        return
+    params = [fields[key.split(" = ")[0]] for key in sets]
+    sets.append("updated_at = ?")
+    params.append(_utc_stamp())
+    params.append(match_id)
+    conn.execute(f"UPDATE matches SET {', '.join(sets)} WHERE id = ?",
+                 params)
+
+
+def list_matches_for_search(conn: Connection, search_request_id: int) -> list[Row]:
+    return list(conn.execute(
+        "SELECT * FROM matches WHERE search_request_id = ?"
+        " ORDER BY id ASC", (search_request_id,)))
+
+
+def list_matches_for_counterpart(conn: Connection, counterpart_type: str,
+                                 counterpart_id: int) -> list[Row]:
+    return list(conn.execute(
+        "SELECT * FROM matches WHERE counterpart_type = ?"
+        " AND counterpart_id = ? ORDER BY id ASC",
+        (counterpart_type, counterpart_id)))
+
+
+def list_matches_for_peer(conn: Connection, user_id: int) -> list[Row]:
+    """Matches where the user's own offer or need is the counterpart."""
+    return list(conn.execute(
+        "SELECT m.*, r.need_text AS search_text, r.status AS search_status,"
+        " t.display_name AS search_twin, u.name AS search_owner"
+        " FROM matches m"
+        " JOIN requests r ON r.id = m.search_request_id"
+        " JOIN twins t ON t.id = r.twin_id"
+        " JOIN users u ON u.id = r.owner_user_id"
+        " WHERE (m.counterpart_type = 'opportunity'"
+        " AND m.counterpart_id IN (SELECT id FROM opportunities"
+        " WHERE owner_user_id = ?))"
+        " OR (m.counterpart_type = 'request'"
+        " AND m.counterpart_id IN (SELECT id FROM requests"
+        " WHERE owner_user_id = ?))"
+        " ORDER BY m.id DESC",
+        (user_id, user_id)))
+
+
+def count_accepted_for_search(conn: Connection, search_request_id: int) -> int:
+    """Distinct peers accepted by the search owner (fulfillment basis)."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM matches"
+        " WHERE search_request_id = ? AND status = 'accepted'"
+        " AND owner_accepted = 1",
+        (search_request_id,)).fetchone()
+    return int(row["n"])
+
+
+def create_notification(conn: Connection, *, user_id: int, kind: str,
+                        title: str, body: str = "", link: str = "") -> int:
+    return insert_returning_id(
+        conn,
+        "INSERT INTO notifications (user_id, kind, title, body, link)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (user_id, kind[:40], title[:200], body[:1000], link[:300]),
+    )
+
+
+def list_notifications(conn: Connection, user_id: int,
+                       limit: int = 50) -> list[Row]:
+    return list(conn.execute(
+        "SELECT * FROM notifications WHERE user_id = ?"
+        " ORDER BY id DESC LIMIT ?", (user_id, max(1, min(500, limit)))))
+
+
+def count_unread_notifications(conn: Connection, user_id: int) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM notifications"
+        " WHERE user_id = ? AND is_read = 0", (user_id,)).fetchone()
+    return int(row["n"])
+
+
+def mark_notification_read(conn: Connection, notif_id: int,
+                           user_id: int) -> bool:
+    cursor = conn.execute(
+        "UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?",
+        (notif_id, user_id))
+    return cursor.rowcount > 0
+
+
+def mark_all_notifications_read(conn: Connection, user_id: int) -> None:
+    conn.execute("UPDATE notifications SET is_read = 1 WHERE user_id = ?",
+                 (user_id,))
+
+
+def create_twin_chat(conn: Connection, *, user_id: int, twin_id: int,
+                     role: str, body: str, kind: str = "text",
+                     ref_type: str = "", ref_id: int = 0) -> int:
+    """Append one Find-Something chat message (owner <-> own twin)."""
+    return insert_returning_id(
+        conn,
+        "INSERT INTO twin_chats (user_id, twin_id, role, body, kind,"
+        " ref_type, ref_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, twin_id, role[:10], body[:4000], kind[:20],
+         ref_type[:20], ref_id),
+    )
+
+
+def list_twin_chats(conn: Connection, user_id: int,
+                    limit: int = 100) -> list[Row]:
+    """Oldest-first chat history for one owner's Find page."""
+    rows = list(conn.execute(
+        "SELECT * FROM twin_chats WHERE user_id = ?"
+        " ORDER BY id DESC LIMIT ?", (user_id, max(1, min(500, limit)))))
+    rows.reverse()
+    return rows
+
+
+def latest_twin_chat(conn: Connection, user_id: int) -> Row | None:
+    return conn.execute(
+        "SELECT * FROM twin_chats WHERE user_id = ?"
+        " ORDER BY id DESC LIMIT 1", (user_id,)).fetchone()
+
+
+def resolve_twin_chat(conn: Connection, msg_id: int,
+                      user_id: int) -> None:
+    """Mark a twin question answered so later messages start fresh."""
+    conn.execute(
+        "UPDATE twin_chats SET kind = 'answered'"
+        " WHERE id = ? AND user_id = ? AND kind = 'question'",
+        (msg_id, user_id))
+
+
+def enqueue_match_event(conn: Connection, *, event_type: str, ref_type: str,
+                        ref_id: int) -> int:
+    return insert_returning_id(
+        conn,
+        "INSERT INTO match_queue (event_type, ref_type, ref_id, status)"
+        " VALUES (?, ?, ?, 'pending')",
+        (event_type[:40], ref_type[:40], ref_id),
+    )
+
+
+def claim_due_match_events(conn: Connection, now_stamp: str,
+                           limit: int = 25) -> list[Row]:
+    """Oldest actionable queue rows (pending, or failed retry due)."""
+    return list(conn.execute(
+        "SELECT * FROM match_queue"
+        " WHERE status = 'pending'"
+        " OR (status = 'failed' AND next_retry_at IS NOT NULL"
+        " AND next_retry_at <= ?)"
+        " ORDER BY id ASC LIMIT ?",
+        (now_stamp, max(1, min(200, limit)))))
+
+
+def set_queue_status(conn: Connection, event_id: int, status: str, *,
+                     attempts: int | None = None,
+                     next_retry_at: str | None = None,
+                     last_error: str = "") -> None:
+    sets, params = ["status = ?"], [status]
+    if attempts is not None:
+        sets.append("attempts = ?")
+        params.append(attempts)
+    if next_retry_at is not None:
+        sets.append("next_retry_at = ?")
+        params.append(next_retry_at)
+    elif status == "done":
+        sets.append("next_retry_at = NULL")
+    sets.append("last_error = ?")
+    params.append(last_error[:500])
+    sets.append("updated_at = ?")
+    params.append(_utc_stamp())
+    params.append(event_id)
+    conn.execute(f"UPDATE match_queue SET {', '.join(sets)} WHERE id = ?",
+                 params)
+
+
 def update_request(
     conn: Connection, req_id: int, *, category: str | None = None,
+    need_text: str | None = None,
     requirements: dict | None = None, conditions: dict | None = None,
     status: str | None = None,
+    expires_at: str | None | bool = None,
+    quantity_requested: int | None = None,
 ) -> None:
     sets, params = [], []
     if category is not None:
         sets.append("category = ?")
         params.append(category)
+    if need_text is not None:
+        sets.append("need_text = ?")
+        params.append(need_text)
+    if expires_at is not None and expires_at is not False:
+        sets.append("expires_at = ?")
+        params.append(expires_at)
+    elif expires_at is False:
+        # Explicit clear (None means "leave unchanged").
+        sets.append("expires_at = NULL")
+    if quantity_requested is not None:
+        sets.append("quantity_requested = ?")
+        params.append(quantity_requested)
     if requirements is not None:
         sets.append("requirements_json = ?")
         params.append(json.dumps(requirements))

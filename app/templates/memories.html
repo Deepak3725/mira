@@ -11,10 +11,23 @@
 <section class="me-card">
   <h2>Import</h2>
   <p class="lede">Upload a <strong>file you export yourself</strong> (max {{ max_mb }} MB, <code>.json</code> or <code>.zip</code>): ChatGPT <em>Settings - Data controls - Export data</em> (<code>conversations.json</code> or the whole zip), Claude <em>Settings - Privacy - Export data</em> (zip), Gemini via Google Takeout (<em>My Activity - Gemini Apps</em>), or a hand-made <code>{"memories": [...]}</code> file. Only your own messages are extracted; assistant replies are ignored. This is a one-time manual file import - MIRA never connects to your AI accounts, never scrapes them, and never syncs automatically. Meta AI has no machine-readable export and cannot be imported yet.</p>
-  <form method="post" action="/memories/import" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+  <form method="post" action="/memories/import" enctype="multipart/form-data" id="import-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <label>Export file <input type="file" name="export_file" accept=".json,.zip,application/json,application/zip" required /></label>
-    <button class="button" type="submit">Import for review</button>
+    <button class="button" type="submit" id="import-btn">Import for review</button>
+    <p class="lede" id="import-busy" hidden>Importing… this can take a few seconds for large exports.</p>
   </form>
+  <script>
+  (function () {
+    var form = document.getElementById("import-form");
+    if (!form) return;
+    form.addEventListener("submit", function () {
+      var btn = document.getElementById("import-btn");
+      var busy = document.getElementById("import-busy");
+      if (btn) { btn.disabled = true; btn.textContent = "Importing…"; }
+      if (busy) busy.hidden = false;
+    });
+  })();
+  </script>
 </section>
 <section class="me-card">
   <h2>Review queue</h2>

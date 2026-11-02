@@ -87,11 +87,18 @@ def is_participant_owner(conn: Connection, conv: Row, user_id: int | None) -> bo
 
 def find_open_request_conversation(conn: Connection, twin_a_id: int,
                                      twin_b_id: int, request_id: int) -> Row | None:
-    """Existing non-closed chat for one request contact (idempotency probe)."""
+    """Existing non-closed chat for one request contact (idempotency probe).
+
+    Direction-agnostic: a seeker-initiated contact and a later
+    provider-initiated contact about the same need reuse the one open
+    chat instead of forking duplicates.
+    """
     return conn.execute(
-        "SELECT * FROM conversations WHERE twin_a_id = ? AND twin_b_id = ?"
+        "SELECT * FROM conversations"
+        " WHERE ((twin_a_id = ? AND twin_b_id = ?)"
+        " OR (twin_a_id = ? AND twin_b_id = ?))"
         " AND request_id = ? AND status != 'closed' ORDER BY id LIMIT 1",
-        (twin_a_id, twin_b_id, request_id),
+        (twin_a_id, twin_b_id, twin_b_id, twin_a_id, request_id),
     ).fetchone()
 
 
@@ -125,8 +132,12 @@ def create_conversation(
         req = get_request(conn, request_id)
         if req is None:
             raise ConversationError("Linked request does not exist.")
-        if req["twin_id"] != twin_a_id:
-            raise ConversationError("Request does not belong to the initiating twin.")
+        if req["twin_id"] not in (twin_a_id, twin_b_id):
+            raise ConversationError(
+                "Request does not belong to either twin.")
+        if not need_engine.is_shared(req):
+            raise ConversationError(
+                "That request is private or withdrawn.")
     max_turns = max(2, min(30, int(max_turns)))
     conv_id = insert_returning_id(
         conn,
@@ -149,9 +160,17 @@ def create_conversation(
 def get_or_create_request_conversation(
     conn: Connection, *, twin_a_id: int, twin_b_id: int,
     created_by_user_id: int, request_id: int,
+    opportunity_id: int | None = None,
     purpose: str = "service", max_turns: int = DEFAULT_MAX_TURNS,
 ) -> tuple[int, bool]:
-    """Contact idempotency: reuse the open chat for one request, else create."""
+    """Contact idempotency: reuse the open chat for one request, else create.
+
+    twin_a is always the initiator's twin (enforced by
+    create_conversation); the linked request may belong to either
+    side, so providers can answer a discovered need. opportunity_id
+    records which offering was contacted, when the contact started
+    from one.
+    """
     existing = find_open_request_conversation(conn, twin_a_id, twin_b_id, request_id)
     if existing is not None:
         audit(conn, existing["id"], "contact-reused", created_by_user_id,
@@ -161,7 +180,7 @@ def get_or_create_request_conversation(
     conv_id = create_conversation(
         conn, twin_a_id=twin_a_id, twin_b_id=twin_b_id,
         created_by_user_id=created_by_user_id, request_id=request_id,
-        purpose=purpose, max_turns=max_turns)
+        opportunity_id=opportunity_id, purpose=purpose, max_turns=max_turns)
     need_engine.mark_chatting(conn, request_id)
     return conv_id, True
 
@@ -189,6 +208,7 @@ def list_for_user(conn: Connection, user_id: int) -> list[Row]:
     return list(
         conn.execute(
             "SELECT c.*, ta.display_name AS name_a, tb.display_name AS name_b,"
+            " ta.user_id AS owner_a_id, tb.user_id AS owner_b_id,"
             " o.title AS opp_title FROM conversations c"
             " JOIN twins ta ON ta.id = c.twin_a_id"
             " JOIN twins tb ON tb.id = c.twin_b_id"
@@ -323,7 +343,8 @@ def conversation_requires_approval(conn: Connection, conv: Row) -> bool:
 
 def step_conversation(conn: Connection, conv_id: int, actor_user_id: int | None,
                       memories: list[str] | None = None,
-                      provider=None) -> dict[str, Any]:
+                      provider=None,
+                      max_tokens: int | None = None) -> dict[str, Any]:
     """Advance one twin turn. Returns the new message plus status info."""
     conv = get_conversation(conn, conv_id)
     if conv is None:
@@ -344,11 +365,32 @@ def step_conversation(conn: Connection, conv_id: int, actor_user_id: int | None,
     ctx = build_context(conn, conv, conv["turn"], memories)
     try:
         result = budget.guarded_generate(
-            conn, provider, ctx, conv_id=conv_id, user_id=actor_user_id)
+            conn, provider, ctx, conv_id=conv_id, user_id=actor_user_id,
+            max_tokens=max_tokens)
         used_provider = provider.name
     except (BudgetExhausted, MetaAPIError, MetaNotConfigured) as exc:
         if provider.name == "mock":
             raise ConversationError(f"Reply failed: {exc}")
+        if isinstance(exc, MetaAPIError):
+            # A request was attempted: it may have been billed, so it must
+            # leave a row (mirrors intent.py / router.py). Known usage
+            # keeps its real cost; unknown usage is flagged failed_unknown
+            # and priced at the conservative estimate, so budget checks
+            # count it instead of treating it as free.
+            if exc.usage_known:
+                budget.record_usage(
+                    conn, provider=provider.name,
+                    model=getattr(provider, "model", ""),
+                    conv_id=conv_id, user_id=actor_user_id,
+                    tokens_in=exc.tokens_in, tokens_out=exc.tokens_out,
+                    status="failed_known", notes=str(exc))
+            else:
+                budget.record_usage(
+                    conn, provider=provider.name,
+                    model=getattr(provider, "model", ""),
+                    conv_id=conv_id, user_id=actor_user_id,
+                    tokens_in=0, tokens_out=0,
+                    status="failed_unknown", notes=str(exc))
         # Graceful, transparent degradation: free mock + visible system notice.
         conn.execute(
             "INSERT INTO messages (conv_id, sender, body, provider)"
@@ -385,14 +427,10 @@ def step_conversation(conn: Connection, conv_id: int, actor_user_id: int | None,
             (conv_id, f"Turn limit reached ({conv['max_turns']} twin messages). Conversation closed."),
         )
         audit(conn, conv_id, "auto-closed", None, "turn limit")
-        if conv["purpose"] == "recruitment" and conv["opportunity_id"]:
-            recommendation = generate_recommendation(conn, conv_id)
-            conn.execute(
-                "INSERT INTO messages (conv_id, sender, body, provider)"
-                " VALUES (?, 'system', ?, 'mock')",
-                (conv_id, recommendation),
-            )
-        elif conv["purpose"] == "service" and conv["request_id"]:
+        # NOTE (hackathon compliance): recruitment close-out used to
+        # append automated candidate verdicts and interview questions.
+        # Removed: twins coordinate but never assess applicants.
+        if conv["purpose"] == "service" and conv["request_id"]:
             recommendation = generate_service_summary(conn, conv_id)
             conn.execute(
                 "INSERT INTO messages (conv_id, sender, body, provider)"
@@ -498,48 +536,8 @@ def generate_service_summary(conn: Connection, conv_id: int) -> str:
     return "\n".join(lines)
 
 
-def generate_recommendation(conn: Connection, conv_id: int) -> str:
-    """Deterministic recruitment summary. Transparent criteria, no AI needed."""
-    from .matching import SeekerProfile, score_opportunity
-
-    conv = get_conversation(conn, conv_id)
-    if conv is None:
-        raise ConversationError("Conversation not found.")
-    opp = get_opportunity(conn, conv["opportunity_id"]) if conv["opportunity_id"] else None
-    if opp is None:
-        raise ConversationError("Recommendation needs a linked opportunity.")
-    # The seeker side is whichever twin is NOT the opportunity owner's.
-    opp_owner = conn.execute(
-        "SELECT owner_user_id FROM opportunities WHERE id = ?", (opp["id"],)
-    ).fetchone()["owner_user_id"]
-    seeker_twin_id = conv["twin_b_id"] if conv["owner_a_id"] == opp_owner else conv["twin_a_id"]
-    seeker = get_twin(conn, seeker_twin_id)
-    # The summary must reflect only what the chat could legitimately exchange.
-    match = score_opportunity(
-        SeekerProfile.from_profile(privacy.twin_public_view(seeker)),
-        required_skills=_parse(opp["required_skills_json"], []),
-        preferred_years=opp["preferred_experience_years"],
-        location=opp["location"],
-        remote_ok=bool(opp["remote_ok"]),
-    )
-    turns = twin_message_count(conn, conv_id)
-    questions = sum(1 for m in list_messages(conn, conv_id) if "?" in m["body"])
-    verdict = (
-        "RECOMMENDED for owner review" if match.score >= 70
-        else "PROMISING but with gaps — owner review advised" if match.score >= 45
-        else "WEAK fit on current criteria — owner decides"
-    )
-    lines = [
-        f"Recruitment summary for '{opp['title']}' (deterministic, rule-based):",
-        f"- Candidate twin: {seeker['display_name']} ({seeker['owner_name']})",
-        f"- Skill coverage: {len(match.matching_skills)} of "
-        f"{len(match.matching_skills) + len(match.missing_skills)} required "
-        f"({match.skill_points:.0f}/60 pts)",
-        f"- Experience fit: {match.experience_points:.0f}/20 pts",
-        f"- Location fit: {match.location_points:.0f}/20 pts",
-        f"- Overall rough fit: {match.score}/100",
-        f"- Exchange depth: {turns} twin messages, {questions} questions asked",
-        f"- Verdict: {verdict}.",
-        "The twin does not hire. Both owners keep the final decision.",
-    ]
-    return "\n".join(lines)
+# NOTE (hackathon compliance): the automated recruitment verdict
+# (generate_recommendation: RECOMMENDED/PROMISING/WEAK candidate
+# assessments) was removed. Twins coordinate about opportunities but
+# never score, rank, or judge applicants. Owner-side discovery lives
+# in app/matching.py; generate_service_summary above stays neutral.

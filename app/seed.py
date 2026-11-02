@@ -1,4 +1,4 @@
-﻿"""Demo seed data: four fictional users, each with one personal twin.
+"""Demo seed data: four fictional users, each with one personal twin.
 
 All people, companies, and contact details here are fictional and exist only
 for the hackathon demo. Run once (idempotent)::
@@ -18,6 +18,14 @@ from .db import (
     init_db,
 )
 
+
+class SeedProviderRefused(Exception):
+    """The demo seeder refuses to run on a non-mock provider.
+
+    Seeding replays fixed conversation turns; it must never bill a live
+    account because the ambient AI_PROVIDER happens to be non-mock.
+    """
+
 SEED_USERS: list[dict] = [
     {
         "name": "Deepak",
@@ -34,17 +42,21 @@ SEED_USERS: list[dict] = [
             "avatar_seed": "deepak-companion-01",
             "authorized_fields": [
                 "headline", "skills", "experience_years", "location",
-                "availability", "portfolio_url", "bio",
+                "availability", "portfolio_url", "bio", "interests",
             ],
             "profile": {
-                "headline": "Backend developer (Python, FastAPI)",
-                "skills": ["Python", "FastAPI", "SQLite", "REST APIs"],
+                "headline": "Full-stack developer (JavaScript, Node.js, Python)",
+                "skills": ["Python", "FastAPI", "JavaScript", "Node.js",
+                           "REST APIs", "SQLite"],
                 "experience_years": 3,
                 "location": "Thimphu",
                 "availability": "Open to full-time roles",
                 "open_to_remote": True,
                 "portfolio_url": "https://example.com/deepak-portfolio",
-                "bio": "Builds small, reliable web services and loves clean APIs.",
+                "bio": ("Builds small, reliable web services and loves clean "
+                        "APIs, from Node.js frontends to Python backends."),
+                "interests": ["backend development", "APIs",
+                              "developer tools"],
                 # ---- private: never authorized ----
                 "phone": "+975-17-000-001",
                 "personal_email": "deepak.private@example.com",
@@ -68,7 +80,7 @@ SEED_USERS: list[dict] = [
             "avatar_seed": "karma-companion-02",
             "authorized_fields": [
                 "company", "role_hiring", "requirements", "location",
-                "contact_channel",
+                "contact_channel", "interests",
             ],
             "profile": {
                 "company": "Druk Analytics (fictional)",
@@ -76,6 +88,8 @@ SEED_USERS: list[dict] = [
                 "requirements": ["Python", "APIs", "2+ years experience"],
                 "location": "Thimphu (hybrid)",
                 "contact_channel": "via MIRA twin chat",
+                "interests": ["team building", "product development",
+                              "mentoring juniors"],
                 # ---- private: never authorized ----
                 "phone": "+975-17-000-002",
                 "personal_email": "karma.private@example.com",
@@ -99,7 +113,7 @@ SEED_USERS: list[dict] = [
             "avatar_seed": "pema-companion-03",
             "authorized_fields": [
                 "headline", "skills", "experience_years", "location",
-                "availability", "portfolio_url",
+                "availability", "portfolio_url", "interests",
             ],
             "profile": {
                 "headline": "UX designer, design systems & prototyping",
@@ -109,6 +123,8 @@ SEED_USERS: list[dict] = [
                 "availability": "Open to collaborations",
                 "open_to_remote": True,
                 "portfolio_url": "https://example.com/pema-portfolio",
+                "interests": ["design systems", "prototyping",
+                              "design collaboration"],
                 # ---- private: never authorized ----
                 "phone": "+975-17-000-003",
                 "personal_email": "pema.private@example.com",
@@ -131,7 +147,7 @@ SEED_USERS: list[dict] = [
             "avatar_seed": "tashi-companion-04",
             "authorized_fields": [
                 "headline", "skills", "experience_years", "location",
-                "availability",
+                "availability", "interests",
             ],
             "profile": {
                 "headline": "Independent DevOps specialist",
@@ -140,10 +156,135 @@ SEED_USERS: list[dict] = [
                 "location": "Remote",
                 "availability": "2 project slots open",
                 "open_to_remote": True,
+                "interests": ["automation", "open source",
+                              "short infrastructure gigs"],
                 # ---- private: never authorized ----
                 "phone": "+975-17-000-004",
                 "personal_email": "tashi.private@example.com",
                 "client_list": ["Fictional Client A", "Fictional Client B"],
+            },
+        },
+    },
+    {
+        "name": "Choden",
+        "role": "job_seeker",
+        "email": "choden.demo@example.com",
+        "password": "mira-choden-demo",
+        "twin": {
+            "display_name": "Cho",
+            "persona": (
+                "Junior data analyst building reporting dashboards. "
+                "Still learning SQL; strong with spreadsheets and charts."
+            ),
+            "tone": "curious, earnest, clear",
+            "avatar_seed": "choden-companion-05",
+            "authorized_fields": [
+                "headline", "skills", "experience_years", "location",
+                "availability", "interests",
+            ],
+            "profile": {
+                "headline": "Junior data analyst (Excel, reporting)",
+                "skills": ["Excel", "Reporting", "Data Cleaning"],
+                "experience_years": 1,
+                "location": "Phuentsholing",
+                "availability": "Open to full-time roles",
+                "open_to_remote": False,
+                "interests": ["data visualization", "learning SQL"],
+                # ---- private: never authorized ----
+                "phone": "+975-17-000-005",
+                "personal_email": "choden.private@example.com",
+            },
+        },
+    },
+    {
+        "name": "Tshering",
+        "role": "professional",
+        "email": "tshering.demo@example.com",
+        "password": "mira-tshering-demo",
+        "twin": {
+            "display_name": "Tshe",
+            "persona": (
+                "Career counsellor with strict privacy settings. "
+                "Shares only a public headline with other twins."
+            ),
+            "tone": "discreet, reassuring, brief",
+            "avatar_seed": "tshering-companion-06",
+            "authorized_fields": ["headline"],
+            "profile": {
+                "headline": "Career counsellor (consultations only)",
+                "skills": ["Counselling", "CV Review", "Mentoring"],
+                "experience_years": 8,
+                "location": "Thimphu",
+                "availability": "By appointment",
+                "open_to_remote": True,
+                "interests": ["mentoring", "career growth"],
+                # ---- private: never authorized ----
+                "phone": "+975-17-000-006",
+                "personal_email": "tshering.private@example.com",
+            },
+        },
+    },
+    {
+        "name": "Wangchuk",
+        "role": "independent",
+        "email": "wangchuk.demo@example.com",
+        "password": "mira-wangchuk-demo",
+        "twin": {
+            "display_name": "Wang",
+            "persona": (
+                "Independent researcher importing past conversations. "
+                "Uses MIRA to review imported knowledge before sharing."
+            ),
+            "tone": "thoughtful, careful, friendly",
+            "avatar_seed": "wangchuk-companion-07",
+            "authorized_fields": [
+                "headline", "skills", "experience_years", "location",
+                "availability", "interests",
+            ],
+            "profile": {
+                "headline": "Independent researcher (surveys, interviews)",
+                "skills": ["Surveys", "Interviews", "Note Taking"],
+                "experience_years": 4,
+                "location": "Paro",
+                "availability": "Open to short projects",
+                "open_to_remote": True,
+                "interests": ["field research", "knowledge management"],
+                # ---- private: never authorized ----
+                "phone": "+975-17-000-007",
+                "personal_email": "wangchuk.private@example.com",
+            },
+        },
+    },
+    {
+        "name": "Dema",
+        "role": "independent",
+        "email": "dema.demo@example.com",
+        "password": "mira-dema-demo",
+        "twin": {
+            "display_name": "Dem",
+            "persona": (
+                "Freelance illustrator exercising pause, edit, and "
+                "lifecycle workflows in the MIRA demo."
+            ),
+            "tone": "cheerful, flexible, honest",
+            "avatar_seed": "dema-companion-08",
+            "authorized_fields": [
+                "headline", "skills", "experience_years", "location",
+                "availability", "portfolio_url", "interests",
+            ],
+            "profile": {
+                "headline": "Freelance illustrator",
+                "skills": ["Illustration", "Character Design", "Procreate"],
+                "experience_years": 6,
+                "location": "Remote",
+                "availability": "Booking next month",
+                "open_to_remote": True,
+                "portfolio_url": "https://example.com/dema-portfolio",
+                "interests": ["visual storytelling",
+                              "character design"],
+                # ---- private: never authorized ----
+                "phone": "+975-17-000-008",
+                "personal_email": "dema.private@example.com",
             },
         },
     },
@@ -208,7 +349,7 @@ OPPORTUNITIES: list[dict] = [
     {
         "owner_email": "karma.demo@example.com",
         "kind": "job",
-        "category": "job",
+        "category": "",
         "title": "Backend Developer",
         "description": (
             "Build and maintain small Python APIs for a fictional analytics "
@@ -223,7 +364,7 @@ OPPORTUNITIES: list[dict] = [
     {
         "owner_email": "karma.demo@example.com",
         "kind": "job",
-        "category": "job",
+        "category": "",
         "title": "API Integration Specialist",
         "description": "Closed listing kept to verify closed items never surface.",
         "required_skills": ["Python"],
@@ -325,6 +466,7 @@ DRIVER_USERS: list[dict] = [
                 "vehicle": "Sedan, 3 seats",
                 "service_area": ["Thimphu", "GCIT", "Paro"],
                 "availability": "Weekdays 7 AM - 9 PM",
+                "interests": ["city routes", "airport runs"],
                 "phone": "+975-17-000-005",
                 "personal_email": "dorji.private@example.com",
             },
@@ -346,6 +488,7 @@ DRIVER_USERS: list[dict] = [
                 "rate": "Nu. 650 per trip",
                 "vehicle": "SUV, 4 seats",
                 "service_area": ["Paro", "Thimphu", "Airport"],
+                "interests": ["long valley trips", "airport transfers"],
                 "phone": "+975-17-000-006",
                 "personal_email": "sonam.private@example.com",
             },
@@ -395,8 +538,13 @@ DRIVER_OFFERINGS: list[dict] = [
 ]
 
 
-def seed_demo_drivers(path: Path | str | None = None) -> dict[str, int]:
-    """Insert fictional driver twins + taxi offerings if missing (idempotent)."""
+def seed_demo_drivers(path: Path | str | None = None,
+                      include_offerings: bool = True) -> dict[str, int]:
+    """Insert fictional driver twins + taxi offerings if missing.
+
+    Idempotent. ``include_offerings=False`` seeds driver users/twins
+    only, for clean demo databases with no prearranged activity.
+    """
     from .auth import hash_password
     from .db import (
         create_opportunity,
@@ -428,6 +576,9 @@ def seed_demo_drivers(path: Path | str | None = None) -> dict[str, int]:
                 created += 1
             else:
                 skipped += 1
+        if not include_offerings:
+            conn.commit()
+            return {"created": created, "skipped": skipped}
         for entry in DRIVER_OFFERINGS:
             owner = get_user_by_email(conn, entry["owner_email"])
             if owner is None:
@@ -450,10 +601,23 @@ def seed_demo_drivers(path: Path | str | None = None) -> dict[str, int]:
     return {"created": created, "skipped": skipped}
 
 
-def seed_demo_conversation(path: Path | str | None = None) -> dict[str, int]:
-    """Create one public demo twin chat (Deepak x Karma). Idempotent."""
+def seed_demo_conversation(path: Path | str | None = None,
+                         provider=None) -> dict[str, int]:
+    """Create one public demo twin chat (Deepak x Karma). Idempotent.
+
+    Mock provider only: an ambient or explicit non-mock provider is
+    refused before any database access, so seeding can never bill.
+    """
     from . import conversations as engine
     from .db import get_connection, get_opportunity_by_owner_title, get_twin_by_user
+    from .providers import get_provider
+
+    resolved = provider if provider is not None else get_provider()
+    if getattr(resolved, "name", None) != "mock":
+        raise SeedProviderRefused(
+            f"Refusing to seed the demo chat on provider "
+            f"{getattr(resolved, 'name', resolved)!r}: run with "
+            f"AI_PROVIDER=mock (no paid calls during seeding).")
 
     # NOTE: callers must init_db() first; seeding never wipes (Postgres
     # test init drops the schema, so an init here would erase prior seeds).
@@ -478,7 +642,8 @@ def seed_demo_conversation(path: Path | str | None = None) -> dict[str, int]:
             purpose="recruitment", max_turns=8, is_demo=True)
         for i in range(6):
             engine.step_conversation(
-                conn, cid, deepak["id"] if i % 2 == 0 else karma["id"])
+                conn, cid, deepak["id"] if i % 2 == 0 else karma["id"],
+                provider=resolved)
         return {"created": 1, "skipped": 0}
     finally:
         conn.close()
@@ -576,6 +741,57 @@ def seed_demo_memories(path: Path | str | None = None) -> dict[str, int]:
     return {"created": created, "skipped": skipped}
 
 
+#: Open needs other demo twins can discover (fixed idempotency keys
+#: make reseeding a no-op). Arbitrary, non-taxi posts on purpose: they
+#: prove category-independent discovery out of the box.
+DEMO_REQUESTS: list[dict] = [
+    {"email": "tashi.demo@example.com", "category": "service",
+     "need_text": ("Looking for someone to design a logo for my side "
+                   "project. Prefer a designer in Thimphu; budget up to "
+                   "Nu. 8000."),
+     "idempotency_key": "demo-seed-tashi-logo"},
+    {"email": "pema.demo@example.com", "category": "service",
+     "need_text": ("Looking for a Python tutor for two evening sessions "
+                   "per week. Remote is fine."),
+     "idempotency_key": "demo-seed-pema-tutor"},
+]
+
+
+def seed_demo_requests(path: Path | str | None = None) -> dict[str, int]:
+    """Insert open demo needs if missing. Returns counts created/skipped."""
+    from . import requests as need_engine
+    from .db import get_connection
+    from .request_parse import parse_need
+
+    # NOTE: callers must init_db() first; seeding never wipes (Postgres
+    # test init drops the schema, so an init here would erase prior seeds).
+    conn = get_connection(path)
+    created = skipped = 0
+    try:
+        for entry in DEMO_REQUESTS:
+            owner = get_user_by_email(conn, entry["email"])
+            twin = get_twin_by_user(conn, owner["id"]) if owner else None
+            if twin is None:
+                continue
+            parsed = parse_need(entry["need_text"])
+            req_id, was_created = need_engine.create_need(
+                conn, twin_id=twin["id"], owner_user_id=owner["id"],
+                category=entry["category"], need_text=entry["need_text"],
+                requirements=parsed["requirements"],
+                idempotency_key=entry["idempotency_key"])
+            req = need_engine.get_request(conn, req_id)
+            if req is not None and req["status"] == "draft":
+                need_engine.confirm_request(conn, req_id, owner["id"])
+            if was_created:
+                created += 1
+            else:
+                skipped += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"created": created, "skipped": skipped}
+
+
 def refuse_in_production() -> None:
     from .config import settings as _settings
 
@@ -584,16 +800,59 @@ def refuse_in_production() -> None:
         raise SystemExit("Refusing to seed demo data in production.")
 
 
+def _describe_target(explicit: str | None) -> str:
+    """Human-readable seed target. Never prints credentials."""
+    from .config import settings as _settings
+    from .db import _resolve
+
+    if explicit:
+        return f"SQLite file {_resolve(explicit)}"
+    if (_settings.database_url or "").strip():
+        return "PostgreSQL via DATABASE_URL (value hidden)"
+    return f"SQLite file {_resolve(_settings.database_path)}"
+
+
 if __name__ == "__main__":
+    import argparse as _argparse
+
+    _parser = _argparse.ArgumentParser(
+        description="Seed the MIRA demo database (idempotent, additive).")
+    _parser.add_argument("--db", default=None, help=(
+        "SQLite file to seed (default: DATABASE_PATH or data/mira.db). "
+        "Always pass this for demo setups so the target is explicit."))
+    _parser.add_argument("--clean", action="store_true", help=(
+        "Seed users, twins, profiles, and memories only: no offers,"
+        " needs, matches, notifications, or conversations."))
+    _args = _parser.parse_args()
     refuse_in_production()
-    init_db()
-    users = seed_demo_data()
-    opps = seed_demo_opportunities()
-    drivers = seed_demo_drivers()
-    mems = seed_demo_memories()
-    demo = seed_demo_conversation()
-    print(f"seeded demo users: {users['created']} created, {users['skipped']} skipped")
-    print(f"seeded opportunities: {opps['created']} created, {opps['skipped']} skipped")
-    print(f"seeded drivers: {drivers['created']} created, {drivers['skipped']} skipped")
-    print(f"seeded memories: {mems['created']} created, {mems['skipped']} skipped")
-    print(f"seeded demo chat: {demo['created']} created, {demo['skipped']} skipped")
+    from .config import settings as _settings
+
+    if _args.db is None and (_settings.database_url or "").strip():
+        raise SystemExit(
+            "DATABASE_URL is set: pass --db <sqlite-file> to seed an "
+            "explicit demo database instead of Postgres.")
+    print(f"seed target: {_describe_target(_args.db)}")
+    if _args.clean:
+        print("seed mode: clean (no prearranged activity)")
+    init_db(_args.db)
+    users = seed_demo_data(_args.db)
+    mems = seed_demo_memories(_args.db)
+    if _args.clean:
+        drivers = seed_demo_drivers(_args.db, include_offerings=False)
+        print(f"seeded demo users: {users['created']} created, {users['skipped']} skipped")
+        print(f"seeded memories: {mems['created']} created, {mems['skipped']} skipped")
+        print(f"seeded drivers: {drivers['created']} created, {drivers['skipped']} skipped")
+        print("seeded opportunities: 0 created, 0 skipped (clean mode)")
+        print("seeded open needs: 0 created, 0 skipped (clean mode)")
+        print("seeded demo chat: 0 created, 0 skipped (clean mode)")
+    else:
+        opps = seed_demo_opportunities(_args.db)
+        drivers = seed_demo_drivers(_args.db)
+        reqs = seed_demo_requests(_args.db)
+        demo = seed_demo_conversation(_args.db)
+        print(f"seeded demo users: {users['created']} created, {users['skipped']} skipped")
+        print(f"seeded opportunities: {opps['created']} created, {opps['skipped']} skipped")
+        print(f"seeded drivers: {drivers['created']} created, {drivers['skipped']} skipped")
+        print(f"seeded memories: {mems['created']} created, {mems['skipped']} skipped")
+        print(f"seeded open needs: {reqs['created']} created, {reqs['skipped']} skipped")
+        print(f"seeded demo chat: {demo['created']} created, {demo['skipped']} skipped")

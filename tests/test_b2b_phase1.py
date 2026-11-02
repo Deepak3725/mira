@@ -79,6 +79,58 @@ class TestParser(unittest.TestCase):
         self.assertEqual(out["requirements"], {})
         self.assertTrue(out["warnings"])
 
+    def test_bare_am_is_not_a_time(self):
+        # "I am ..." must not store when_text="am".
+        out = parse_need(
+            "I'm looking for a full-stack developer job in Bhutan.")
+        self.assertNotIn("when_text", out["requirements"])
+        self.assertNotIn("when_iso", out["requirements"])
+        out = parse_need(
+            "I am looking for a full-stack developer job in Bhutan.")
+        self.assertNotIn("when_text", out["requirements"])
+        self.assertNotIn("when_iso", out["requirements"])
+
+    def test_clock_time_with_meridiem_kept(self):
+        out = parse_need("Pick me up tomorrow at 9:30pm")
+        self.assertEqual(out["requirements"]["when_text"],
+                         "tomorrow at 21:30")
+
+    def test_quantity_words_are_not_skills(self):
+        self.assertNotIn("skills",
+                         parse_need("I need four seats")["requirements"])
+        self.assertNotIn(
+            "skills",
+            parse_need("I need a taxi with four seats")["requirements"])
+
+    def test_sentence_case_places_parse(self):
+        req = parse_need("From Thimphu to Dagana.")["requirements"]
+        self.assertEqual(req["origin"], "Thimphu")
+        self.assertEqual(req["destination"], "Dagana")
+        req = parse_need("I need a ride from here to there.")[
+            "requirements"]
+        self.assertNotIn("origin", req)
+        self.assertNotIn("destination", req)
+
+    def test_for_origin_and_learn_skill_parse(self):
+        req = parse_need(
+            "Taxi available for Thimphu to Dagana tomorrow.")[
+            "requirements"]
+        self.assertEqual(req["origin"], "Thimphu")
+        self.assertEqual(req["destination"], "Dagana")
+        req = parse_need("I want to learn backend development.")[
+            "requirements"]
+        self.assertEqual(req["skills"], ["backend"])
+        # "learning" inside a hyphenated compound is not a trigger.
+        req = parse_need("Find a machine-learning tutor.")[
+            "requirements"]
+        self.assertNotIn("skills", req)
+
+    def test_with_skills_still_parsed(self):
+        skills = parse_need(
+            "Looking for someone with JavaScript, Node.js")["requirements"]["skills"]
+        self.assertIn("JavaScript", skills)
+        self.assertIn("Node.js", skills)
+
     def test_empty_and_deterministic(self):
         self.assertTrue(parse_need("")["warnings"])
         self.assertEqual(parse_need(TAXI_NEED), parse_need(TAXI_NEED))
@@ -160,7 +212,11 @@ class TestProviderMatching(B2BCase):
         titles = [s["offering"]["title"] for s in shortlist]
         self.assertIn("City Taxi (Thimphu valley)", titles)
         self.assertNotIn("Premium Taxi (long trips)", titles)  # 650 > 500
-        self.assertNotIn("Backend Developer", titles)  # wrong category
+        # Universal discovery: category is a label, not a gate, so the
+        # job posting still appears — ranked below the fitting taxi.
+        self.assertIn("Backend Developer", titles)
+        self.assertLess(titles.index("City Taxi (Thimphu valley)"),
+                        titles.index("Backend Developer"))
         top = shortlist[0]
         self.assertEqual(top["offering"]["title"], "City Taxi (Thimphu valley)")
         self.assertEqual(top["match"].score, 85)

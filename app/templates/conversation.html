@@ -10,7 +10,7 @@
       <span class="badge">{{ conv.purpose }}</span>
       <span class="badge">brain: {{ provider }}{% if provider == "mock" %} (simulated){% endif %}</span>
       {% if conv.opp_title %}<span>· {{ conv.opp_title }}</span>{% endif %}
-      {% if conv.request_id %}<span>· <a href="/requests/{{ conv.request_id }}">request #{{ conv.request_id }}</a> ({{ conv.req_category }})</span>{% endif %}
+      {% if conv.request_id %}<span>· {% if conv.can_see_request %}<a href="/requests/{{ conv.request_id }}">request #{{ conv.request_id }}</a>{% else %}request #{{ conv.request_id }}{% endif %} ({{ conv.req_category }})</span>{% endif %}
       <span id="turn-counter">{{ conv.turn_count }}/{{ conv.max_turns }} twin messages</span>
     </p>
   </div>
@@ -50,7 +50,7 @@
   {% if conv.status != "closed" %}
   <form method="post" action="/conversations/{{ conv.id }}/close"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Close</button></form>
   {% endif %}
-  {% if (conv.purpose == "recruitment" and conv.opportunity_id) or (conv.purpose == "service" and conv.request_id) %}
+  {% if conv.purpose == "service" and conv.request_id %}
   <form method="post" action="/conversations/{{ conv.id }}/recommend"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><button class="button secondary" type="submit">Generate summary</button></form>
   {% endif %}
 </section>
@@ -62,13 +62,14 @@
     <button class="button secondary" type="submit">Post note</button>
   </form>
   <form class="note-form" method="post" action="/conversations/{{ conv.id }}/decision"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <label>My decision (owners only decide)
+    <label>My decision — interested in coordinating?
       <select name="decision">
         <option value="interested">Interested</option>
         <option value="not-interested">Not interested</option>
       </select>
     </label>
     <button class="button secondary" type="submit">Record decision</button>
+    <p class="lede">Recording interest is not a commitment: twins cannot accept offers or make payments. Each owner decides separately; final arrangements stay with you.</p>
   </form>
 </section>
 <section>

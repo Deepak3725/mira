@@ -14,7 +14,7 @@ from app.db import (
     get_user_by_email,
     init_db,
 )
-from app.seed import seed_demo_data, seed_demo_opportunities
+from app.seed import SEED_USERS, seed_demo_data, seed_demo_opportunities
 
 
 class EngineCase(unittest.TestCase):
@@ -59,6 +59,28 @@ class TestAuth(unittest.TestCase):
         self.assertIsNone(auth.parse_session("bogus"))
         expired = auth.create_session(7, ttl=-10)
         self.assertIsNone(auth.parse_session(expired))
+
+    def test_sessions_unique_within_a_second(self):
+        # Regression: tokens used to be f(user_id, second), so a
+        # logout followed by a same-second re-login re-minted the
+        # just-revoked token and the user stayed locked out (flaky
+        # 303 in the onboarding journey). Frozen time makes the old
+        # collision deterministic; the nonce must prevent it.
+        from unittest import mock
+
+        now = time.time()
+        with mock.patch.object(auth.time, "time",
+                               return_value=now):
+            first = auth.create_session(42)
+            second = auth.create_session(42)
+        self.assertNotEqual(first, second)
+        self.assertEqual(auth.parse_session(first), 42)
+        self.assertEqual(auth.parse_session(second), 42)
+
+    def test_parse_accepts_legacy_three_part_session(self):
+        payload = f"7:{int(time.time()) + 3600}"
+        legacy = f"{payload}:{auth._sign(payload)}"
+        self.assertEqual(auth.parse_session(legacy), 7)
 
     def test_rate_limit(self):
         auth.reset_rate_limits()
@@ -187,22 +209,26 @@ class TestRecruitment(EngineCase):
             created_by_user_id=self.deepak["id"], opportunity_id=opp["id"],
             purpose="recruitment", max_turns=max_turns)
 
-    def test_recommendation_transparent(self):
-        cid = self._recruit_conv()
-        engine.step_conversation(self.conn, cid, self.deepak["id"])
-        engine.step_conversation(self.conn, cid, self.karma["id"])
-        text = engine.generate_recommendation(self.conn, cid)
-        self.assertIn("85/100", text)
-        self.assertIn("Dee", text)
-        self.assertIn("owners keep the final decision", text.lower())
-
-    def test_auto_recommendation_on_limit(self):
+    def test_no_applicant_verdict_on_close_out(self):
+        # Hackathon compliance: recruitment close-out appends no
+        # candidate verdict, score, or interview assessment.
         cid = self._recruit_conv(max_turns=2)
         engine.step_conversation(self.conn, cid, self.deepak["id"])
         result = engine.step_conversation(self.conn, cid, self.karma["id"])
         self.assertTrue(result["auto_closed"])
-        self.assertIsNotNone(result["recommendation"])
-        self.assertIn("Recruitment summary", result["recommendation"])
+        self.assertIsNone(result["recommendation"])
+        bodies = [m["body"] for m in
+                  engine.list_messages(self.conn, cid)]
+        blob = "\n".join(bodies)
+        for banned in ("RECOMMENDED", "PROMISING", "WEAK fit",
+                       "Verdict", "interview questions",
+                       "Recruitment summary"):
+            self.assertNotIn(banned, blob)
+
+    def test_verdict_entry_point_removed(self):
+        self.assertFalse(hasattr(engine, "generate_recommendation"))
+        with self.assertRaises(ImportError):
+            __import__("app.interview")
 
 
 class TestMockPrivacy(EngineCase):
@@ -277,7 +303,8 @@ class TestMigration(unittest.TestCase):
             finally:
                 conn.close()
             result = seed_demo_data(db)
-            self.assertEqual(result, {"created": 0, "skipped": 4})
+            self.assertEqual(
+                result, {"created": 0, "skipped": len(SEED_USERS)})
             conn = get_connection(db)
             try:
                 row = conn.execute("SELECT password_hash FROM users LIMIT 1").fetchone()

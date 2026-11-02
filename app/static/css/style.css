@@ -279,7 +279,7 @@ main.container { padding-bottom: 3rem; }
 .auth-form.wide { max-width: 52rem; }
 
 .auth-form label, .twin-form label, .me-card label, .note-form label,
-.discover-form label, .channel-form label {
+.discover-form label, .channel-form label, .stack-form label {
   display: grid;
   gap: 0.35rem;
   font-weight: 600;
@@ -289,7 +289,9 @@ main.container { padding-bottom: 3rem; }
 .auth-form input, .twin-form input, .twin-form textarea, .twin-form select,
 .note-form input, .note-form select, .me-card input, .me-card select, .me-card textarea,
 .discover-form select, .discover-form input, .channel-form input, .channel-form select,
-.auth-form textarea, .voice-typed input, .voice-controls select {
+.auth-form textarea, .voice-typed input, .voice-controls select,
+.stack-form input, .stack-form textarea, .stack-form select,
+.chat-form textarea {
   font: inherit;
   font-weight: 400;
   padding: 0.6rem 0.75rem;
@@ -1050,4 +1052,143 @@ a:focus-visible, .button:focus-visible, button:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
   .type-caret { display: none; }
+}
+
+/* Find Something chat + Post Something forms + slim landing. */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.chat-thread {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 46rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0.25rem 0 1rem;
+}
+
+.bubble-row { display: flex; }
+.bubble-row.user { justify-content: flex-end; }
+.bubble-row.twin { justify-content: flex-start; }
+
+.bubble {
+  max-width: 85%;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.bubble-row.user .bubble {
+  background: var(--teal-deep);
+  border-color: var(--teal-deep);
+  color: #fff;
+}
+
+.bubble-row.twin .bubble { background: var(--mint-soft); }
+
+.bubble-body { margin: 0; white-space: pre-wrap; }
+
+.result-cards {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.result-cards li {
+  border-top: 1px solid var(--line);
+  padding-top: 0.5rem;
+}
+
+.result-cards a { color: var(--teal-ink); }
+.result-why { margin: 0.25rem 0 0; font-size: 0.9rem; }
+.result-none { margin: 0.5rem 0 0; }
+
+.chat-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.6rem;
+  align-items: end;
+  max-width: 46rem;
+  padding-bottom: 0.25rem;
+}
+
+.chat-form textarea { resize: vertical; min-height: 3rem; }
+
+.example-prompts {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.chip {
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--teal-ink);
+  cursor: pointer;
+}
+
+.chip:hover { background: var(--mint); }
+
+.stack-form {
+  display: grid;
+  gap: 0.9rem;
+  max-width: 46rem;
+  padding-bottom: 2rem;
+}
+
+.form-grid {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.review-list { display: grid; gap: 0.45rem; margin: 0 0 1rem; }
+.review-list div { display: grid; grid-template-columns: 6rem 1fr; gap: 0.6rem; }
+.review-list dt { font-weight: 600; color: var(--muted); }
+.review-list dd { margin: 0; }
+
+.how { padding-bottom: 2rem; }
+
+.how-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.how-steps li {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.8rem 1rem;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.how-steps span { color: var(--muted); font-size: 0.92rem; }
+
+@media (min-width: 48rem) {
+  .how-steps { grid-template-columns: 1fr 1fr 1fr; }
+  .form-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 40rem) {
+  .chat-form { grid-template-columns: 1fr; }
+  .bubble { max-width: 95%; }
 }

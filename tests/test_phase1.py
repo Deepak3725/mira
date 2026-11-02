@@ -201,17 +201,19 @@ class TestAvatars(unittest.TestCase):
 
 
 class TestSeed(DbTestCase):
-    def test_seeds_four_users_with_twins(self):
+    def test_seeds_users_with_twins(self):
         result = seed_demo_data(self.db)
-        self.assertEqual(result, {"created": 4, "skipped": 0})
+        self.assertEqual(
+            result, {"created": len(SEED_USERS), "skipped": 0})
         from app.db import get_connection
 
         conn = get_connection(self.db)
         try:
             rows = list_twins(conn)
-            self.assertEqual(len(rows), 4)
+            self.assertEqual(len(rows), len(SEED_USERS))
             names = sorted(r["owner_name"] for r in rows)
-            self.assertEqual(names, ["Deepak", "Karma", "Pema", "Tashi"])
+            self.assertEqual(
+                names, sorted(u["name"] for u in SEED_USERS))
             for row in rows:
                 view = privacy.twin_public_view(row)
                 for secret in ("phone", "personal_email", "salary_expectation",
@@ -224,12 +226,13 @@ class TestSeed(DbTestCase):
     def test_seed_is_idempotent(self):
         seed_demo_data(self.db)
         result = seed_demo_data(self.db)
-        self.assertEqual(result, {"created": 0, "skipped": 4})
+        self.assertEqual(
+            result, {"created": 0, "skipped": len(SEED_USERS)})
         from app.db import get_connection
 
         conn = get_connection(self.db)
         try:
-            self.assertEqual(len(list_twins(conn)), 4)
+            self.assertEqual(len(list_twins(conn)), len(SEED_USERS))
         finally:
             conn.close()
 
@@ -243,17 +246,18 @@ class TestSeed(DbTestCase):
         try:
             self.assertIsNotNone(
                 get_user_by_email(conn, "deepak.demo@example.com"))
-            self.assertEqual(len(list_twins(conn)), 4)
+            self.assertEqual(len(list_twins(conn)), len(SEED_USERS))
         finally:
             conn.close()
 
     def test_seed_matches_declared_users(self):
         from app.db import get_connection
 
-        self.assertEqual(len(SEED_USERS), 4)
+        self.assertEqual(len(SEED_USERS), 8)
         self.assertEqual(
             sorted(u["name"] for u in SEED_USERS),
-            ["Deepak", "Karma", "Pema", "Tashi"],
+            ["Choden", "Deepak", "Dema", "Karma", "Pema", "Tashi",
+             "Tshering", "Wangchuk"],
         )
         conn = get_connection(self.db)
         try:

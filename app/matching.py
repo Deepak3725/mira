@@ -17,6 +17,7 @@ opportunity kind.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from sqlite3 import Connection, Row
 from typing import Any
@@ -61,7 +62,12 @@ class SeekerProfile:
             if isinstance(s, str) and s.strip()
         )
         years = profile.get("experience_years")
-        if isinstance(years, bool) or not isinstance(years, (int, float)):
+        if (isinstance(years, bool)
+                or not isinstance(years, (int, float))
+                or not math.isfinite(years)
+                or years < 0):
+            # Garbage in, treated as unknown: negative years would
+            # subtract points and NaN would crash scoring.
             years = None
         location = profile.get("location")
         if not isinstance(location, str) or not location.strip():
@@ -108,6 +114,8 @@ def score_opportunity(
     else:
         skill_points = SKILL_WEIGHT * len(matching) / len(required)
         skill_note = f"Matches {len(matching)} of {len(required)} required skills"
+        if matching:
+            skill_note += f" ({', '.join(matching)})"
         if missing:
             skill_note += f". Missing: {', '.join(missing)}"
 
@@ -167,9 +175,10 @@ def find_matches(
     Returns only public opportunity fields plus owner twin identity (no
     emails, phones, or other private data). Sorted by score desc, id asc.
     """
-    # Discovery is a public surface, so matching input is the twin's AUTHORIZED
-    # public view only. Private fields can never leak through explanations,
-    # no matter who browses as this twin.
+    # Discovery input is the twin's AUTHORIZED public view only, and
+    # routes score the viewer's OWN twin only (see pages.py). Private
+    # fields can never leak through explanations, and nobody's twin is
+    # scored for anyone else.
     seeker = SeekerProfile.from_profile(privacy.twin_public_view(twin))
 
     wanted_skills = {_norm(s) for s in (skills_filter or []) if _norm(s)}
@@ -350,25 +359,26 @@ def find_providers(
     limit: int = 10,
     candidate_cap: int = 50,
 ) -> list[dict[str, Any]]:
-    """Ranked provider shortlist for one request. Public data only, both sides.
+    """Provider offerings relevant to one request. Public data only.
 
-    Coarse SQL pre-filter (category + open status, capped) runs before scoring,
-    so cost stays bounded as offerings grow. Sorted by score desc, id asc.
+    Category is a label, never a gate: every open offering is scored
+    on price/place/availability/tags fit, so arbitrary needs ("build
+    my website") still discover relevant posts. The candidate cap
+    bounds cost as offerings grow. Sorted by fit desc, id asc for
+    retrieval; the UI shows matching facts with no scores and no
+    verdicts (hackathon compliance: providers are never ranked as
+    applicants).
     """
     requirements = _as_dict(req["requirements_json"])
-    category = (req["category"] or "").strip()
     results: list[dict[str, Any]] = []
-    for opp in list_opportunities(conn, status="open", category=category or None,
+    for opp in list_opportunities(conn, status="open",
                                   limit=candidate_cap):
         if opp["owner_user_id"] == req["owner_user_id"]:
             continue
-        if category and opp["category"] and opp["category"] != category:
-            continue
-        if category and not opp["category"]:
-            continue  # categorized requests only match categorized offerings
-        attributes = _as_dict(opp["attributes_json"])
-        if not attributes.get("location") and opp["location"]:
-            attributes = dict(attributes, location=opp["location"])
+        # Skill-based offerings (jobs, gigs) carry their tags as
+        # required skills; surface them to the tag signal instead
+        # of scoring every skill-need as "tags unknown".
+        attributes = _offering_attributes(opp)
         match = score_provider(requirements, attributes)
         if match.excluded_reason:
             continue
@@ -393,4 +403,161 @@ def find_providers(
             }
         )
     results.sort(key=lambda r: (-r["match"].score, r["offering"]["id"]))
+    return results[: max(0, limit)]
+
+
+# ---------------------------------------------------------------------------
+# Reverse discovery: open NEEDS relevant to one twin (universal Find
+# Something). Mirrors find_providers: a twin discovers other owners'
+# shared requests it could help with, scored against its own offerings
+# plus plain word overlap, never gated on category. Only shared
+# (owner-confirmed, not withdrawn) needs surface, and the seeker's
+# budget ceiling is stripped before display.
+# ---------------------------------------------------------------------------
+
+_KEYWORD_STOP = frozenset({
+    "a", "an", "the", "and", "or", "but", "for", "with", "from", "that",
+    "this", "these", "those", "are", "was", "were", "have", "has", "had",
+    "will", "would", "could", "should", "need", "needs", "needing",
+    "want", "wants", "looking", "find", "please", "someone", "somebody",
+    "person", "people", "help", "who", "can", "into", "out", "about",
+    "your", "you", "our", "their", "his", "her", "its", "not",
+})
+
+
+def _keywords(text: Any) -> set[str]:
+    import re as _re
+
+    words = _re.findall(r"[a-z0-9+#.]+", str(text or "").lower())
+    return {w.strip("+#.") for w in words
+            if len(w.strip("+#.")) >= 3 and w not in _KEYWORD_STOP}
+
+
+@dataclass(frozen=True)
+class NeedMatch:
+    score: int
+    explanation: str
+    offer_points: float
+    text_points: float
+
+
+def _offering_attributes(opp: Row) -> dict:
+    attributes = _as_dict(opp["attributes_json"])
+    if not attributes.get("location") and opp["location"]:
+        attributes = dict(attributes, location=opp["location"])
+    if not _str_list(attributes.get("tags")):
+        required = _json_list(opp["required_skills_json"])
+        if required:
+            attributes = dict(attributes, tags=required)
+    return attributes
+
+
+def _offering_words(opp: Row) -> set[str]:
+    words = _keywords(opp["title"]) | _keywords(opp["description"])
+    for tag in _str_list(_as_dict(opp["attributes_json"]).get("tags")):
+        words |= _keywords(tag)
+    for skill in _json_list(opp["required_skills_json"]):
+        words |= _keywords(skill)
+    return words
+
+
+def find_needs(
+    conn: Connection,
+    twin: Row,
+    *,
+    limit: int = 10,
+    candidate_cap: int = 50,
+) -> list[dict[str, Any]]:
+    """Others' shared needs this twin could help with. Public data only.
+
+    Two signals, both deterministic: (1) the twin's own offerings
+    scored against the need's requirements (best offering wins, same
+    price/place/availability/tags rules as find_providers); (2) word
+    overlap between the need text and the twin's offerings/profile.
+    Twins with no offerings still match on profile words. Sorted by
+    fit desc, id asc; the UI shows matching facts with no scores and
+    no verdicts.
+    """
+    from .db import list_opportunities, list_shared_requests
+    from .requests import request_title
+
+    my_offerings = [o for o in list_opportunities(conn, status="open")
+                    if o["owner_user_id"] == twin["user_id"]]
+    seeker = SeekerProfile.from_profile(privacy.twin_public_view(twin))
+    profile_words = _keywords(" ".join(seeker.skills))
+    if seeker.location:
+        profile_words |= _keywords(seeker.location)
+    my_words: set[str] = set(profile_words)
+    for opp in my_offerings:
+        my_words |= _offering_words(opp)
+
+    results: list[dict[str, Any]] = []
+    for req in list_shared_requests(
+            conn, exclude_user_id=twin["user_id"], limit=candidate_cap):
+        requirements = _as_dict(req["requirements_json"])
+        best: ProviderMatch | None = None
+        via: Row | None = None
+        for opp in my_offerings:
+            scored = score_provider(
+                requirements, _offering_attributes(opp))
+            if scored.excluded_reason:
+                continue
+            if best is None or scored.score > best.score:
+                best, via = scored, opp
+        offer_points = float(best.score) if best else 0.0
+
+        need_words = _keywords(req["need_text"])
+        for skill in _str_list(requirements.get("skills")):
+            need_words |= _keywords(skill)
+        overlap = need_words & my_words if my_words else set()
+        if need_words and my_words:
+            text_points = 100.0 * len(overlap) / len(need_words)
+        else:
+            text_points = 0.0
+
+        if my_offerings:
+            total = 0.7 * offer_points + 0.3 * text_points
+        else:
+            total = text_points
+        score = max(0, min(100, int(round(total))))
+        if score <= 0:
+            continue
+        notes = []
+        if best is not None and via is not None:
+            notes.append(f"Fits your offering '{via['title']}'"
+                         f" ({best.explanation})")
+        if overlap:
+            shown = ", ".join(sorted(overlap)[:5])
+            notes.append(f"Shares: {shown}")
+        elif not my_offerings:
+            notes.append("Word overlap with your twin profile")
+        results.append(
+            {
+                "need": {
+                    "id": req["id"],
+                    "title": request_title(req["need_text"]),
+                    "need_text": req["need_text"],
+                    "category": req["category"],
+                    "status": req["status"],
+                    "requirements": provider_summary_for_peer(
+                        requirements),
+                },
+                "seeker": {
+                    "name": req["owner_name"],
+                    "role": req["owner_role"],
+                    "twin_display_name": req["twin_name"],
+                    "twin_avatar_seed": req["twin_avatar_seed"],
+                },
+                "via_offering": (
+                    {"id": via["id"], "title": via["title"]}
+                    if via is not None else None
+                ),
+                "match": NeedMatch(
+                    score=score,
+                    explanation="; ".join(notes) or "Possibly relevant.",
+                    offer_points=round(offer_points, 2),
+                    text_points=round(text_points, 2)),
+            }
+        )
+    results.sort(key=lambda r: (-r["match"].score, r["need"]["id"]))
     return results[: max(0, limit)]

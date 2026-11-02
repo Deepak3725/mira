@@ -27,7 +27,8 @@ class ProviderResult:
 class MockProvider:
     name = "mock"
 
-    def generate(self, context) -> ProviderResult:  # context: conversations.TwinContext
+    def generate(self, context,  # context: conversations.TwinContext
+                 max_tokens: int | None = None) -> ProviderResult:
         return ProviderResult(text=mock_mind.generate(context))
 
 

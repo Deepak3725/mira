@@ -179,6 +179,37 @@ class DiscoveryTestCase(unittest.TestCase):
         self.assertIsNone(profile.location)
         self.assertTrue(profile.open_to_remote)
 
+    def test_nasty_experience_values_are_unknown(self):
+        for bad in (-5, -0.5, float("nan"), float("inf"),
+                    float("-inf"), True):
+            with self.subTest(years=bad):
+                profile = SeekerProfile.from_profile(
+                    {"skills": ["Python"], "experience_years": bad,
+                     "location": "Thimphu"})
+                self.assertIsNone(profile.experience_years)
+                match = score_opportunity(
+                    profile, required_skills=["Python"],
+                    preferred_years=3, location="Thimphu",
+                    remote_ok=False)
+                self.assertIn("Experience not listed",
+                              match.explanation)
+                self.assertGreaterEqual(match.score, 0)
+
+    def test_skill_matching_is_exact_case_insensitive(self):
+        seeker = SeekerProfile(skills=("Python", "Go"),
+                               experience_years=3,
+                               location="Thimphu")
+        match = score_opportunity(
+            seeker, required_skills=["python", "GO", "Rust"],
+            preferred_years=3, location="Thimphu", remote_ok=False)
+        self.assertEqual(match.matching_skills, ("python", "GO"))
+        self.assertEqual(match.missing_skills, ("Rust",))
+        near = score_opportunity(
+            seeker, required_skills=["Python 3", "Golang"],
+            preferred_years=3, location="Thimphu", remote_ok=False)
+        self.assertEqual(near.matching_skills, ())
+        self.assertEqual(near.skill_points, 0.0)
+
     def test_opportunity_seed_idempotent(self):
         result = seed_demo_opportunities(self.db)
         self.assertEqual(result["created"], 0)

@@ -1,29 +1,150 @@
-"""End-to-end HTTP flows via TestClient (isolated temp SQLite database).
+"""End-to-end HTTP flows via a socket-free ASGI client.
 
-Covers the public-beta critical paths: register/login, twin create/edit,
-request new/review/confirm, provider contact, conversation stepping,
-memory import/approve, logout, user isolation, and CSRF enforcement on
-every exercised POST. No network, no live AI, no shared state.
+Same coverage as before (register/login, twin create/edit, request
+lifecycle, provider contact, conversation stepping, memory
+import/approve, logout, user isolation, CSRF on every exercised
+POST): full HTTP stack through the real ASGI app, isolated temp
+SQLite database, no network, no live AI, no shared state.
+
+``httpx.ASGITransport`` drives the app fully in-process without the
+socketpair the starlette TestClient portal needs, which restricted
+sandboxes forbid (WinError 10013). Lifespan setup is just
+``init_db()`` (see ``app.main.lifespan``), run explicitly here.
 """
 
 import asyncio
 import os
 import re
+import selectors
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
-if sys.platform == "win32":
-    # Selector loop needs no socketpair (sandbox blocks it); TestClient
-    # runs fully in-process, so this changes nothing about coverage.
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+import httpx
 
-from starlette.testclient import TestClient
+if sys.platform == "win32":
+    # Selector loop needs no socketpair (restricted sandboxes forbid
+    # it); every request runs fully in-process on a fresh loop.
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    # The self-pipe is built eagerly in __init__ and used only as a
+    # cross-thread wakeup fast path. Disable it at class level (the
+    # sandbox forbids all socket creation) and let the periodic tick
+    # in _run_sandboxed pick up threadpool completions by polling.
+    asyncio.SelectorEventLoop._make_self_pipe = lambda self: None
+    asyncio.SelectorEventLoop._close_self_pipe = lambda self: None
+    # Both the base and selector-level wakeups: the Windows selector
+    # loop overrides _write_to_self, so patching the base alone still
+    # crashes worker-thread completion callbacks (hang).
+    asyncio.BaseEventLoop._write_to_self = lambda self: None
+    asyncio.SelectorEventLoop._write_to_self = lambda self: None
+    # Windows select() rejects empty fd sets (WSAEINVAL); with no
+    # sockets at all, sleeping through the timeout is exactly what
+    # the empty case means on every other platform.
+    _orig_select = selectors.SelectSelector._select
+
+    def _select_or_sleep(self, rlist, wlist, xlist, timeout=None):
+        if not rlist and not wlist and not xlist:
+            if timeout is None:
+                timeout = 0.005
+            if timeout > 0:
+                time.sleep(timeout)
+            return ([], [], [])
+        return _orig_select(self, rlist, wlist, xlist, timeout)
+
+    selectors.SelectSelector._select = _select_or_sleep
 
 from app import auth
 from app import config as config_mod
+from app.db import init_db
 from app.main import app as _app
+
+
+def _run_sandboxed(coro):
+    """Run one coroutine without any socket creation.
+
+    Windows event loops lazily build a socketpair self-pipe the first
+    time a worker thread wakes the loop (``call_soon_threadsafe``),
+    which restricted sandboxes forbid. The pipe is only a wakeup fast
+    path: with wakeups disabled and a 5 ms periodic tick, the loop
+    picks up threadpool completions by polling instead. Test
+    infrastructure only; the application is untouched.
+    """
+    loop = asyncio.new_event_loop()
+
+    def _tick():
+        if not loop.is_closed():
+            loop.call_later(0.005, _tick)
+
+    loop.call_later(0.005, _tick)
+    prev = asyncio.get_event_loop_policy().get_event_loop()
+    asyncio.get_event_loop_policy().set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        asyncio.get_event_loop_policy().set_event_loop(prev)
+        loop.close()
+
+
+class _SyncASGITransport(httpx.BaseTransport):
+    """Drive the ASGI app in-process: no sockets, no portal threads.
+
+    Each request runs the application on a fresh event loop and the
+    httpx client layer above keeps working unchanged (cookies,
+    redirects, multipart encoding, file uploads).
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return _run_sandboxed(self._handle(request))
+
+    async def _handle(self, request: httpx.Request) -> httpx.Response:
+        body = request.read()
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": request.method,
+            "scheme": request.url.scheme or "http",
+            "path": request.url.path,
+            "raw_path": request.url.raw_path,
+            "query_string": request.url.query,
+            "headers": [(k.lower(), v)
+                        for k, v in request.headers.raw],
+            "server": ("testserver", 80),
+            "client": ("testclient", 50000),
+        }
+        incoming = [{"type": "http.request", "body": body,
+                     "more_body": False}]
+        status = 500
+        headers: list[tuple[bytes, bytes]] = []
+        chunks: list[bytes] = []
+
+        async def receive():
+            if incoming:
+                return incoming.pop(0)
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message["status"]
+                headers.extend(message.get("headers", []))
+            elif message["type"] == "http.response.body":
+                chunks.append(message.get("body", b""))
+
+        await self.app(scope, receive, send)
+        return httpx.Response(status, headers=headers,
+                              content=b"".join(chunks),
+                              request=request)
+
+
+def _client() -> httpx.Client:
+    return httpx.Client(transport=_SyncASGITransport(_app),
+                        base_url="http://testserver",
+                        follow_redirects=True)
 
 
 def _hidden(html: str, name: str) -> str:
@@ -42,9 +163,10 @@ class E2ECase(unittest.TestCase):
         os.environ["DATABASE_PATH"] = self.db
         # Never let developer shell state redirect this suite at real PG.
         os.environ["DATABASE_URL"] = ""
-        # MIRA_TEST_DATABASE_URL is deliberately left alone: unset -> the
-        # temp SQLite file above; set -> the shared mira_test PG schema,
-        # which the app lifespan wipes fresh for every test.
+        # MIRA_TEST_DATABASE_URL is deliberately left alone: unset/'sqlite'
+        # -> the temp SQLite file above; set -> the shared mira_test PG
+        # schema (tests/__init__.py sets the MIRA_TEST_MODE marker that
+        # allows the redirect; the real server always ignores it).
         self._test_settings = config_mod.get_settings()
         self._patched = []
         for name, module in list(sys.modules.items()):
@@ -57,11 +179,11 @@ class E2ECase(unittest.TestCase):
         from app import db as db_mod
 
         assert db_mod.settings is self._test_settings, "settings patch missed app.db"
-        self.client = TestClient(_app)
-        self.client.__enter__()
+        init_db()
+        self.client = _client()
 
     def tearDown(self):
-        self.client.__exit__(None, None, None)
+        self.client.close()
         for module in self._patched:
             module.settings = config_mod.settings
         for key, value in self._saved_env.items():
@@ -106,6 +228,14 @@ class TestPublicFlows(E2ECase):
     def test_healthz(self):
         resp = self.client.get("/healthz")
         self.assertEqual(resp.status_code, 200)
+
+    def test_error_page_styled_and_safe(self):
+        resp = self.client.get("/no-such-page")
+        self.assertEqual(resp.status_code, 404)
+        body = resp.text
+        self.assertIn("404 — Not found", body)
+        self.assertIn("/static/css/style.css", body)
+        self.assertNotIn("Traceback", body)
 
     def test_register_login_logout(self):
         self._register(self.client, "E2E Ada", "ada.e2e@example.org")
@@ -164,9 +294,8 @@ class TestPublicFlows(E2ECase):
         self.assertEqual(resp.status_code, 403)
 
     def test_user_isolation(self):
-        bob = TestClient(_app)
-        bob.__enter__()
-        self.addCleanup(bob.__exit__, None, None, None)
+        bob = _client()
+        self.addCleanup(bob.close)
         self._register(self.client, "E2E Ann", "ann.e2e@example.org")
         self._make_twin(self.client)
         rid = self._make_request(self.client, "I need a taxi from X to Y.", "e2e-2")

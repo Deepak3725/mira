@@ -20,7 +20,7 @@ from ..types import (
     ProviderError,
     ProviderNotConfigured,
 )
-from .base import BaseAdapter
+from .base import BaseAdapter, strict_usage
 
 
 class GeminiAdapter(BaseAdapter):
@@ -59,12 +59,8 @@ class GeminiAdapter(BaseAdapter):
 
     @staticmethod
     def _usage(data: dict) -> tuple[int, int]:
-        try:
-            meta = data.get("usageMetadata", {}) or {}
-            return (int(meta.get("promptTokenCount", 0)),
-                    int(meta.get("candidatesTokenCount", 0)))
-        except (TypeError, ValueError):
-            return 0, 0
+        return strict_usage(data, "usageMetadata", "promptTokenCount",
+                            "candidatesTokenCount", "Gemini")
 
     @staticmethod
     def _text(data: dict) -> str:

@@ -562,13 +562,16 @@ class TestParity(FlowCase):
 
     def test_need_posts_request(self):
         self._twin()
-        proposed = self._turn("I need a plumber tomorrow")
+        asked = self._turn("I need a plumber tomorrow")
+        self.assertIn("How long should I search", asked["text"])
+        proposed = self._turn("2 hours")
         self.assertTrue(proposed["expect_confirmation"])
         done = self._turn("yes")
         self.assertIn("Posted request #", done["text"])
         row = self.conn.execute(
-            "SELECT status, category FROM requests").fetchone()
+            "SELECT status, category, expires_at FROM requests").fetchone()
         self.assertEqual(row["status"], "open")
+        self.assertTrue(row["expires_at"])
 
     def test_need_cancel(self):
         self._twin()

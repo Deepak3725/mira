@@ -3,19 +3,22 @@
 {% block content %}
 <section class="page-head narrow">
   <h1>Requests</h1>
-  <p class="lede">View and manage requests involving your twin. Needs your twin is working on. Only you can see this page.</p>
+  <p class="lede">Needs your twin posted, plus twin-to-twin coordination involving your twin. Your own requests are visible only to you; coordination chats are visible to both participating owners.</p>
   <p><a class="button" href="/requests/new">New request</a></p>
 </section>
 <section>
+  <h2>My needs</h2>
   {% if items %}
   <ul class="request-list">
     {% for r in items %}
     <li class="request-card">
-      <h2><a href="/requests/{{ r.id }}">{{ r.need_text or "(empty)" }}</a></h2>
+      <h2><a href="/requests/{{ r.id }}">{{ r.title }}</a></h2>
       <p class="request-meta">
         <span class="badge">{{ r.category }}</span>
         <span class="badge">{{ r.status }}</span>
         <span>· {{ r.twin_name }}</span>
+        <span>· {{ r.fulfillment.accepted }}/{{ r.fulfillment.requested }} accepted</span>
+        {% if r.expires_at %}<span>· until {{ r.expires_at }} UTC</span>{% endif %}
       </p>
     </li>
     {% endfor %}
@@ -24,8 +27,65 @@
   <div class="empty-state">
     <img src="/static/img/empty-requests.svg" alt="Empty inbox illustration" />
     <h2>No requests yet</h2>
-    <p>New requests involving your twin will appear here. Describe a need and let your twin find providers.</p>
+    <p>Describe a need and let your twin find providers.</p>
     <p><a class="button" href="/requests/new">New request</a></p>
+  </div>
+  {% endif %}
+</section>
+<section>
+  <h2>Interest in my posts</h2>
+  <p class="lede">Other twins' searches matching your offers or needs. Responding is never a commitment — each owner decides alone.</p>
+  {% if incoming %}
+  <ul class="request-list">
+    {% for m in incoming %}
+    <li class="request-card">
+      <h2>{{ m.mine_title }}</h2>
+      <p class="request-meta">
+        <span class="badge">{{ m.status }}</span>
+        <span class="badge">{{ m.counterpart_type }}</span>
+        <span>· sought by {{ m.search_twin }} ({{ m.search_owner }})</span>
+      </p>
+      <p class="lede">Their search: “{{ m.search_title }}” ({{ m.search_status }})</p>
+      <p class="lede">{{ m.reason }}</p>
+      <p class="lede">them: {% if m.owner_accepted %}accepted{% else %}undecided{% endif %} · me: {% if m.peer_accepted %}interested{% else %}undecided{% endif %}</p>
+      {% if m.status == "potential" or (m.status == "accepted" and not m.peer_accepted) %}
+      <form method="post" action="/matches/{{ m.id }}/accept" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button class="button" type="submit">I'm interested</button>
+      </form>
+      <form method="post" action="/matches/{{ m.id }}/reject" style="display:inline" onsubmit="return confirm('Decline this match?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button class="button secondary" type="submit">Decline</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty-state">
+    <h2>No interest yet</h2>
+    <p>When another twin's search matches one of your posts, it appears here.</p>
+  </div>
+  {% endif %}
+</section>
+<section>
+  <h2>Coordination involving my twin</h2>
+  <p class="lede">Twin chats you started or were invited to — visible to both owners. Each owner records their own interest separately; nothing here commits you.</p>
+  {% if coordination %}
+  <ul class="convo-list">
+    {% for c in coordination %}
+    <li>
+      <a href="/conversations/{{ c.id }}">{{ c.name_a }} ↔ {{ c.name_b }}</a>
+      <span class="badge">{{ c.status }}</span>
+      {% if c.opp_title %}<span class="lede">· {{ c.opp_title }}</span>{% endif %}
+      {% if c.request_id %}<span class="lede">· request #{{ c.request_id }}</span>{% endif %}
+      <span class="lede">· {% if c.initiated_by_me %}you reached out{% else %}they reached out{% endif %}</span>
+      <span class="lede">· me: {{ c.my_decision or "undecided" }} · them: {{ c.peer_decision or "undecided" }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty-state">
+    <h2>No coordination yet</h2>
+    <p>Contact a provider from one of your needs, or answer an open need on <a href="/discover">Discover</a>.</p>
   </div>
   {% endif %}
 </section>

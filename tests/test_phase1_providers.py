@@ -150,6 +150,43 @@ class TestRouter(unittest.TestCase):
                 route("image", capability="images_out",
                       allow_mock=False)
 
+    def test_explicit_meta_missing_config_raises_not_mock(self):
+        # No model/key configured: an explicit Meta request must refuse,
+        # never silently return the mock adapter as a "meta" result.
+        reg, rou = self._patched(meta_model="", model_api_key="")
+        with reg, rou:
+            with self.assertRaises(ProviderNotConfigured) as ctx:
+                route("chat", explicit="meta")
+            self.assertIn("meta", str(ctx.exception).lower())
+
+    def test_explicit_meta_unpriced_model_raises_not_mock(self):
+        # Unknown model id: MetaAdapter is unavailable, so the explicit
+        # request must refuse rather than fall through to mock.
+        reg, rou = self._patched(meta_model="muse-spark-9.9",
+                                 model_api_key="k")
+        with reg, rou:
+            with self.assertRaises(ProviderNotConfigured):
+                route("chat", explicit="META")  # case-insensitive
+
+    def test_explicit_meta_without_capability_raises(self):
+        reg, rou = self._patched(meta_model="muse-spark-1.3",
+                                 model_api_key="k")
+        with reg, rou:
+            with self.assertRaises(ProviderNotConfigured):
+                route("image", capability="images_out",
+                      explicit="meta")
+
+    def test_explicit_mock_still_works(self):
+        # Intentional offline/demo use is preserved: explicit mock
+        # keeps returning the mock adapter for supported capabilities.
+        reg, rou = self._patched()
+        with reg, rou:
+            self.assertEqual(route("chat", explicit="mock").name,
+                             "mock")
+            self.assertEqual(
+                route("chat", explicit="mock",
+                      capability="text").name, "mock")
+
 
 class TestRetry(unittest.TestCase):
     def test_flaky_then_ok(self):
@@ -253,6 +290,178 @@ class TestMetaAdapter(unittest.TestCase):
         with self.assertRaises(ProviderNotConfigured):
             adapter.generate_text([])
 
+    def test_structured_envelope_matches_legacy_builder(self):
+        from app.meta_client import MetaProvider, response_format_block
+
+        seen = {}
+
+        def fake_adapter(url, payload, headers):
+            seen["adapter"] = payload["response_format"]
+            return {"choices": [{"message": {"content": '{"a": 1}'}}],
+                    "usage": {"prompt_tokens": 5,
+                              "completion_tokens": 2}}
+
+        def fake_legacy(url, key, payload):
+            seen["legacy"] = payload["response_format"]
+            return {"choices": [{"message": {"content": '{"a": 1}'}}],
+                    "usage": {"prompt_tokens": 5,
+                              "completion_tokens": 2}}
+
+        MetaAdapter(model="muse-spark-1.3", api_key="k",
+                    post=fake_adapter).generate_structured(
+            [{"role": "user", "content": "hi"}], {"type": "object"})
+        MetaProvider(model="muse-spark-1.3", api_key="k",
+                     post=fake_legacy).generate_json(
+            [{"role": "user", "content": "hi"}], {"type": "object"})
+        for side in ("adapter", "legacy"):
+            self.assertEqual(set(seen[side]), {"type", "json_schema"})
+            self.assertEqual(seen[side]["type"], "json_schema")
+            self.assertEqual(set(seen[side]["json_schema"]),
+                             {"name", "schema"})
+        self.assertEqual(
+            response_format_block("n", {"type": "object"}),
+            {"type": "json_schema",
+             "json_schema": {"name": "n",
+                             "schema": {"type": "object"}}})
+
+    def test_structured_default_cap_is_4000_in_both_payloads(self):
+        # Live evidence (runs 14-15): structured calls starve at 2000
+        # (~95% reasoning overhead); 4000 is the measured floor fix.
+        from app.meta_client import MAX_JSON_OUTPUT_TOKENS, MetaProvider
+
+        self.assertEqual(MAX_JSON_OUTPUT_TOKENS, 4000)
+        seen = {}
+
+        def fake_adapter(url, payload, headers):
+            seen["adapter"] = payload["max_tokens"]
+            return {"choices": [{"message": {"content": '{"a": 1}'}}],
+                    "usage": {"prompt_tokens": 5,
+                              "completion_tokens": 2}}
+
+        def fake_legacy(url, key, payload):
+            seen["legacy"] = payload["max_tokens"]
+            return {"choices": [{"message": {"content": '{"a": 1}'}}],
+                    "usage": {"prompt_tokens": 5,
+                              "completion_tokens": 2}}
+
+        MetaAdapter(model="muse-spark-1.3", api_key="k",
+                    post=fake_adapter).generate_structured(
+            [{"role": "user", "content": "hi"}], {"type": "object"})
+        MetaProvider(model="muse-spark-1.3", api_key="k",
+                     post=fake_legacy).generate_json(
+            [{"role": "user", "content": "hi"}], {"type": "object"})
+        self.assertEqual(seen, {"adapter": 4000, "legacy": 4000})
+
+    def test_diagnostics_flow_to_result_and_ledger(self):
+        def fake(url, payload, headers):
+            return {"choices": [{"finish_reason": "stop",
+                                 "message": {"content": "OK"}}],
+                    "usage": {"prompt_tokens": 10,
+                              "completion_tokens": 200,
+                              "completion_tokens_details": {
+                                  "reasoning_tokens": 180}}}
+
+        adapter = MetaAdapter(model="muse-spark-1.3", api_key="k",
+                              post=fake)
+        out = adapter.generate_text([{"role": "user", "content": "hi"}])
+        self.assertEqual(out.finish_reason, "stop")
+        self.assertEqual(out.reasoning_tokens, 180)
+
+    def test_truncation_is_retryable_but_parse_errors_are_not(self):
+        from app.ai.types import ProviderError
+
+        def truncated(url, payload, headers):
+            return {"choices": [{"finish_reason": "length",
+                                 "message": {"content": ""}}],
+                    "usage": {"prompt_tokens": 200,
+                              "completion_tokens": 1500}}
+
+        def malformed(url, payload, headers):
+            return {"choices": [{"message": {"content": "Hi."}}],
+                    "usage": {"prompt_tokens": True,
+                              "completion_tokens": -3}}
+
+        with self.assertRaises(ProviderError) as ctx:
+            MetaAdapter(model="muse-spark-1.3", api_key="k",
+                        post=truncated).generate_text([])
+        self.assertTrue(ctx.exception.retryable)
+        self.assertTrue(ctx.exception.usage_known)
+        with self.assertRaises(ProviderError) as ctx:
+            MetaAdapter(model="muse-spark-1.3", api_key="k",
+                        post=malformed).generate_text([])
+        self.assertFalse(ctx.exception.retryable)
+        self.assertFalse(ctx.exception.usage_known)
+
+    def test_default_max_tokens_is_measured_floor(self):
+        # Live evidence: 300 starved 20/20 calls; 1500 is the floor
+        # that lets genuine replies through. The 64-token smoke
+        # override still works (see test_max_tokens_override_*).
+        seen = []
+
+        def fake(url, payload, headers):
+            seen.append(payload)
+            return {"choices": [{"message": {"content": "Hi."}}],
+                    "usage": {"prompt_tokens": 11,
+                              "completion_tokens": 4}}
+
+        MetaAdapter(model="muse-spark-1.3", api_key="k",
+                    post=fake).generate_text(
+            [{"role": "user", "content": "hi"}])
+        self.assertEqual(seen[0]["max_tokens"], 1500)
+
+    def test_max_tokens_override_reaches_payload(self):
+        seen = []
+
+        def fake(url, payload, headers):
+            seen.append(payload)
+            return {"choices": [{"message": {"content": "OK"}}],
+                    "usage": {"prompt_tokens": 10,
+                              "completion_tokens": 2}}
+
+        out = MetaAdapter(model="muse-spark-1.3", api_key="k",
+                          post=fake).generate_text(
+            [{"role": "user", "content": "hi"}], max_tokens=64)
+        self.assertEqual(seen[0]["max_tokens"], 64)
+        self.assertEqual(
+            (out.text, out.tokens_in, out.tokens_out), ("OK", 10, 2))
+
+    def test_max_tokens_invalid_rejected_without_network(self):
+        calls = []
+
+        def fake(url, payload, headers):
+            calls.append(url)
+            return {"choices": [{"message": {"content": "Hi."}}],
+                    "usage": {"prompt_tokens": 11,
+                              "completion_tokens": 4}}
+
+        adapter = MetaAdapter(model="muse-spark-1.3", api_key="k",
+                              post=fake)
+        for bad in (0, -1, -1500, True, False, 1501, 2000,
+                    "64", 64.0, [64], {"max_tokens": 64}):
+            with self.subTest(limit=bad):
+                with self.assertRaises(ValueError):
+                    adapter.generate_text(
+                        [{"role": "user", "content": "hi"}],
+                        max_tokens=bad)
+        self.assertEqual(calls, [])
+
+    def test_max_tokens_boundaries_accepted(self):
+        seen = []
+
+        def fake(url, payload, headers):
+            seen.append(payload)
+            return {"choices": [{"message": {"content": "OK"}}],
+                    "usage": {"prompt_tokens": 10,
+                              "completion_tokens": 2}}
+
+        adapter = MetaAdapter(model="muse-spark-1.3", api_key="k",
+                              post=fake)
+        for good in (1, 64, 300, 1500):
+            adapter.generate_text([{"role": "user", "content": "hi"}],
+                                  max_tokens=good)
+        self.assertEqual([p["max_tokens"] for p in seen],
+                         [1, 64, 300, 1500])
+
     def test_responses_tool_loop(self):
         seen = []
 
@@ -338,11 +547,12 @@ class TestAnthropicAdapter(unittest.TestCase):
             self.assertEqual(headers["anthropic-version"], "2023-06-01")
             return {"content": [{"type": "text", "text": '{"ok": true}'}],
                     "usage": {"input_tokens": 6,
-                              "completion_tokens": 2}}
+                              "output_tokens": 2}}
 
         adapter = AnthropicAdapter(model="m", api_key="k", post=fake)
         out = adapter.generate_structured([], {"type": "object"})
         self.assertEqual(out.structured, {"ok": True})
+        self.assertEqual((out.tokens_in, out.tokens_out), (6, 2))
         self.assertIn("JSON object", bodies[0]["messages"][-1]["content"])
 
     def test_tool_loop(self):
@@ -353,17 +563,18 @@ class TestAnthropicAdapter(unittest.TestCase):
                      "name": "ping", "input": {}}],
                     "stop_reason": "tool_use",
                     "usage": {"input_tokens": 5,
-                              "completion_tokens": 2}}
+                              "output_tokens": 2}}
             return {"content": [{"type": "text", "text": "Pong."}],
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 9,
-                              "completion_tokens": 1}}
+                              "output_tokens": 1}}
 
         out = AnthropicAdapter(model="m", api_key="k",
                                post=fake).run_tools(
             [{"role": "user", "content": "ping"}],
             [{"name": "ping"}], lambda n, a: "pong")
         self.assertEqual(out.text, "Pong.")
+        self.assertEqual((out.tokens_in, out.tokens_out), (14, 3))
 
 
 class TestGeminiAdapter(unittest.TestCase):
@@ -409,7 +620,7 @@ class TestRunTask(AIcase):
         result = run_task(self.conn, task,
                           messages=[{"role": "user",
                                      "content": "hi"}],
-                          conv_id=1, user_id=1)
+                          conv_id=1, user_id=1, provider_name="mock")
         self.assertTrue(result.mock)
         self.assertEqual(result.provider, "mock")
         row = self.conn.execute("SELECT * FROM usage_log").fetchone()
@@ -418,6 +629,32 @@ class TestRunTask(AIcase):
         chained = task.with_output(result)
         self.assertEqual(len(chained.prior_outputs), 1)
         self.assertTrue(project.history)
+
+    def test_explicit_meta_unconfigured_leaves_no_mock_row(self):
+        # End to end: an explicit Meta request with Meta unconfigured
+        # raises before routing, budgeting, or any fallback -- no mock
+        # result is ever returned as a successful Meta result.
+        project = new_project("p1", "g")
+        task = new_task(project, "t1", "chat", "hi")
+        with mock.patch("app.ai.registry.settings") as reg_cfg, \
+                mock.patch("app.ai.router.settings") as rou_cfg:
+            for cfg in (reg_cfg, rou_cfg):
+                cfg.ai_provider = "mock"
+                cfg.ai_routes = ""
+                cfg.meta_model = ""
+                cfg.model_api_key = ""
+                cfg.openai_model = ""
+                cfg.openai_api_key = ""
+                cfg.gemini_model = ""
+                cfg.gemini_api_key = ""
+                cfg.anthropic_model = ""
+                cfg.anthropic_api_key = ""
+            with self.assertRaises(ProviderNotConfigured):
+                run_task(self.conn, task, messages=[],
+                         conv_id=1, user_id=1, provider_name="meta")
+        left = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM usage_log").fetchone()
+        self.assertEqual(left["n"], 0)
 
     def test_unpriced_vendor_never_calls_network(self):
         project = new_project("p1", "demo goal")
@@ -474,6 +711,257 @@ class TestRunTask(AIcase):
             "SELECT status FROM usage_log ORDER BY id")]
         self.assertEqual(statuses, ["failed_unknown", "ok"])
 
+    def _priced_openai(self):
+        budget.VENDOR_PRICES[("openai", "m")] = (1.0, 2.0)
+        self.addCleanup(budget.VENDOR_PRICES.pop, ("openai", "m"))
+        reg = mock.patch("app.ai.registry.settings")
+        rou = mock.patch("app.ai.router.settings")
+        return reg, rou
+
+    def _configure_openai(self, reg_cfg, rou_cfg):
+        for cfg in (reg_cfg, rou_cfg):
+            cfg.ai_provider = "openai"
+            cfg.ai_routes = ""
+            cfg.openai_model = "m"
+            cfg.openai_api_key = "k"
+            cfg.meta_model = ""
+            cfg.model_api_key = ""
+            cfg.gemini_model = ""
+            cfg.gemini_api_key = ""
+            cfg.anthropic_model = ""
+            cfg.anthropic_api_key = ""
+
+    def test_unknown_vendor_usage_leaves_estimated_row(self):
+        # Valid text but no usage block: the ledger must hold a
+        # failed_unknown estimate row, never a $0 "ok" row.
+        reg, rou = self._priced_openai()
+        with reg as reg_cfg, rou as rou_cfg, mock.patch(
+                "app.ai.adapters.base.http_post_json",
+                return_value={"choices": [{"message": {
+                    "content": "Yo."}}]}):
+            self._configure_openai(reg_cfg, rou_cfg)
+            project = new_project("p1", "g")
+            task = new_task(project, "t1", "chat", "hi")
+            result = run_task(self.conn, task, messages=[],
+                              conv_id=1, user_id=1)
+        self.assertTrue(result.mock)
+        rows = list(self.conn.execute(
+            "SELECT status, tokens_in, tokens_out, est_cost_usd"
+            " FROM usage_log ORDER BY id"))
+        self.assertEqual([r["status"] for r in rows],
+                         ["failed_unknown", "ok"])
+        self.assertEqual((rows[0]["tokens_in"], rows[0]["tokens_out"]),
+                         (0, 0))
+        self.assertGreater(rows[0]["est_cost_usd"], 0.0)
+
+    def test_openai_tool_loop_keeps_partial_plus_unknown(self):
+        # First tool round reports usage, the second omits it: the
+        # known round keeps its exact cost and the uncertain round
+        # gets the conservative estimate.
+        script = [
+            {"choices": [{"message": {
+                "content": "",
+                "tool_calls": [{"id": "t1", "type": "function",
+                                "function": {"name": "now",
+                                             "arguments": "{}"}}]}}],
+             "usage": {"prompt_tokens": 10, "completion_tokens": 5}},
+            {"choices": [{"message": {"content": "Noon."}}]},
+        ]
+        reg, rou = self._priced_openai()
+        with reg as reg_cfg, rou as rou_cfg, mock.patch(
+                "app.ai.adapters.base.http_post_json",
+                side_effect=lambda *a: script.pop(0)):
+            self._configure_openai(reg_cfg, rou_cfg)
+            project = new_project("p1", "g")
+            task = new_task(project, "t1", "research", "time?")
+            result = run_task(
+                self.conn, task, messages=[{"role": "user",
+                                            "content": "time?"}],
+                tools=[{"name": "now"}],
+                tool_handler=lambda n, a: "noon",
+                conv_id=1, user_id=1, max_attempts=1)
+        self.assertTrue(result.mock)
+        rows = list(self.conn.execute(
+            "SELECT status, tokens_in, tokens_out, est_cost_usd"
+            " FROM usage_log ORDER BY id"))
+        self.assertEqual([r["status"] for r in rows],
+                         ["failed_known", "failed_unknown", "ok"])
+        self.assertEqual((rows[0]["tokens_in"], rows[0]["tokens_out"]),
+                         (10, 5))
+        self.assertGreater(rows[1]["est_cost_usd"], 0.0)
+
+    def test_run_task_passes_max_tokens_to_meta(self):
+        from app.ai.registry import ProviderSpec
+
+        seen = []
+
+        def fake(url, payload, headers):
+            seen.append(payload)
+            return {"choices": [{"message": {"content": "OK"}}],
+                    "usage": {"prompt_tokens": 10,
+                              "completion_tokens": 2}}
+
+        saved = REGISTRY._specs["meta"]
+        REGISTRY._specs["meta"] = ProviderSpec(
+            "meta", lambda: MetaAdapter(model="muse-spark-1.3",
+                                        api_key="k", post=fake),
+            "test fake")
+        self.addCleanup(
+            lambda: REGISTRY._specs.__setitem__("meta", saved))
+        project = new_project("p1", "g")
+        task = new_task(project, "t1", "test", "reply OK")
+        result = run_task(
+            self.conn, task,
+            messages=[{"role": "user", "content": "Reply with exactly: OK"}],
+            conv_id=1, user_id=1, provider_name="meta",
+            max_attempts=1, fallback_to_mock=False, max_tokens=64)
+        self.assertEqual(result.provider, "meta")
+        self.assertEqual(seen[0]["max_tokens"], 64)
+
+    def test_run_task_records_diagnostic_notes(self):
+        from app.ai.registry import ProviderSpec
+
+        def fake(url, payload, headers):
+            return {"choices": [{"finish_reason": "stop",
+                                 "message": {"content": "OK"}}],
+                    "usage": {"prompt_tokens": 10,
+                              "completion_tokens": 200,
+                              "completion_tokens_details": {
+                                  "reasoning_tokens": 180}}}
+
+        saved = REGISTRY._specs["meta"]
+        REGISTRY._specs["meta"] = ProviderSpec(
+            "meta", lambda: MetaAdapter(model="muse-spark-1.3",
+                                        api_key="k", post=fake),
+            "test fake")
+        self.addCleanup(
+            lambda: REGISTRY._specs.__setitem__("meta", saved))
+        project = new_project("p1", "g")
+        task = new_task(project, "t1", "chat", "hi")
+        result = run_task(self.conn, task, messages=[],
+                          conv_id=1, user_id=1, provider_name="meta",
+                          max_attempts=1, fallback_to_mock=False)
+        self.assertEqual(result.reasoning_tokens, 180)
+        self.assertEqual(result.finish_reason, "stop")
+        notes = self.conn.execute(
+            "SELECT notes FROM usage_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()["notes"]
+        self.assertIn("finish_reason=stop", notes)
+        self.assertIn("reasoning_tokens=180", notes)
+
+    def test_run_task_max_tokens_refused_off_meta_text_path(self):
+        project = new_project("p1", "g")
+        task = new_task(project, "t1", "chat", "hi")
+        # Mock provider: refusing loudly beats silently ignoring it.
+        with self.assertRaises(ValueError):
+            run_task(self.conn, task, messages=[],
+                     conv_id=1, user_id=1, provider_name="mock",
+                     max_tokens=64)
+        # Tools path: routing itself refuses mock+tools first -- either
+        # way the combination is refused loudly with no network call.
+        with self.assertRaises(ProviderNotConfigured):
+            run_task(self.conn, task, messages=[],
+                     conv_id=1, user_id=1, provider_name="mock",
+                     tools=[{"name": "t"}],
+                     tool_handler=lambda n, a: {},
+                     max_tokens=64)
+        with self.assertRaises(ValueError):
+            run_task(self.conn, task, messages=[],
+                     conv_id=1, user_id=1, provider_name="mock",
+                     structured_schema={"type": "object"},
+                     max_tokens=64)
+        # Meta + tools: routing succeeds, so the override guard itself
+        # must refuse (no tool-loop call may carry a text-only knob).
+        from app.ai.registry import ProviderSpec
+
+        def boom(url, payload, headers):
+            raise AssertionError("no network on refused override")
+
+        saved = REGISTRY._specs["meta"]
+        REGISTRY._specs["meta"] = ProviderSpec(
+            "meta", lambda: MetaAdapter(model="muse-spark-1.3",
+                                        api_key="k", post=boom),
+            "test fake")
+        self.addCleanup(
+            lambda: REGISTRY._specs.__setitem__("meta", saved))
+        with self.assertRaises(ValueError):
+            run_task(self.conn, task,
+                     messages=[{"role": "user", "content": "hi"}],
+                     conv_id=1, user_id=1, provider_name="meta",
+                     tools=[{"name": "t"}],
+                     tool_handler=lambda n, a: {},
+                     max_tokens=64)
+        left = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM usage_log").fetchone()
+        self.assertEqual(left["n"], 0)
+
+
+class TestStrictVendorUsage(unittest.TestCase):
+    """Non-Meta adapters must never report unknown usage as (0, 0).
+
+    Missing, null, or malformed usage raises ProviderError with
+    unknown tokens, so run_task accounts the call through the
+    failed_unknown estimate. Explicitly reported zeros stay known.
+    """
+
+    def _cases(self):
+        return [
+            ("openai", OpenAIAdapter(model="m", api_key="k"),
+             lambda usage: {"choices": [{"message": {
+                 "content": "Yo."}}], "usage": usage},
+             "prompt_tokens", "completion_tokens"),
+            ("gemini", GeminiAdapter(model="gem", api_key="k"),
+             lambda usage: {"candidates": [{"content": {"parts": [
+                 {"text": "Hi"}]}}], "usageMetadata": usage},
+             "promptTokenCount", "candidatesTokenCount"),
+            ("anthropic", AnthropicAdapter(model="m", api_key="k"),
+             lambda usage: {"content": [{"type": "text",
+                                         "text": "Hi"}],
+                            "usage": usage},
+             "input_tokens", "output_tokens"),
+        ]
+
+    def test_missing_usage_raises_unknown(self):
+        for vendor, adapter, body, _in, _out in self._cases():
+            with self.subTest(vendor=vendor):
+                adapter._post = lambda u, p, h: body({"other": 1})
+                with self.assertRaises(ProviderError) as ctx:
+                    adapter.generate_text([])
+                self.assertFalse(ctx.exception.usage_known)
+
+    def test_null_and_malformed_usage_raise_unknown(self):
+        bad_blocks = [None, [10, 5], "10/5", 42,
+                      {"in": -5, "out": 10}, {"in": 10, "out": -1},
+                      {"in": True, "out": 5}, {"in": "lots",
+                                               "out": 5}]
+        for vendor, adapter, body, in_key, out_key in self._cases():
+            for bad in bad_blocks:
+                if isinstance(bad, dict):
+                    bad = {in_key: bad["in"], out_key: bad["out"]}
+                with self.subTest(vendor=vendor, usage=bad):
+                    adapter._post = lambda u, p, h, b=bad: body(b)
+                    with self.assertRaises(ProviderError) as ctx:
+                        adapter.generate_text([])
+                    self.assertFalse(ctx.exception.usage_known)
+
+    def test_valid_usage_parsed(self):
+        for vendor, adapter, body, in_key, out_key in self._cases():
+            with self.subTest(vendor=vendor):
+                usage = {in_key: 11, out_key: 4}
+                adapter._post = lambda u, p, h: body(usage)
+                out = adapter.generate_text([])
+                self.assertEqual((out.tokens_in, out.tokens_out),
+                                 (11, 4))
+
+    def test_explicit_zero_usage_is_known(self):
+        for vendor, adapter, body, in_key, out_key in self._cases():
+            with self.subTest(vendor=vendor):
+                usage = {in_key: 0, out_key: 0}
+                adapter._post = lambda u, p, h: body(usage)
+                out = adapter.generate_text([])
+                self.assertEqual((out.tokens_in, out.tokens_out),
+                                 (0, 0))
+
 
 class TestMigrationV8(AIcase):
     def test_telemetry_columns_and_version(self):
@@ -492,7 +980,8 @@ class TestMigrationV8(AIcase):
         ).fetchone()["version"]
         self.assertEqual(version, SCHEMA_VERSION)
         # Pinned deliberately: bump only with a real migration.
-        self.assertEqual(SCHEMA_VERSION, 12)
+        # v14 adds twin_chats (Find Something history).
+        self.assertEqual(SCHEMA_VERSION, 14)
 
 
 class TestBackCompat(unittest.TestCase):
@@ -503,9 +992,12 @@ class TestBackCompat(unittest.TestCase):
             get_provider,
         )
 
-        self.assertIsInstance(get_provider(), MockProvider)
-        self.assertIsInstance(get_provider("mock"), MockProvider)
-        self.assertEqual(get_provider().name, "mock")
+        # Pin ambient config: the default-provider assertion must not
+        # depend on the developer's local AI_PROVIDER.
+        with mock.patch("app.providers.settings", ai_provider="mock"):
+            self.assertIsInstance(get_provider(), MockProvider)
+            self.assertIsInstance(get_provider("mock"), MockProvider)
+            self.assertEqual(get_provider().name, "mock")
         self.assertEqual(ProviderResult(text="x").tokens_in, 0)
 
     def test_unknown_legacy_name_warns(self):

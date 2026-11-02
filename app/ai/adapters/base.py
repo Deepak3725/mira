@@ -52,6 +52,35 @@ def http_post_json(url: str, payload: dict, headers: dict,
             f"Response was not valid JSON: {exc}.") from exc
 
 
+def strict_usage(data, usage_key: str, in_key: str, out_key: str,
+               vendor: str) -> tuple[int, int]:
+    """Parse one vendor usage block strictly.
+
+    Returns (tokens_in, tokens_out). A missing, null, malformed,
+    boolean, or negative usage block raises ProviderError with
+    unknown tokens (None), so the caller accounts the call through
+    the failed_unknown estimate instead of understating spend as
+    $0. Explicitly reported zeros are honored as known (0, 0).
+    Mirrors the Meta client's usage validation.
+    """
+    usage = data.get(usage_key) if isinstance(data, dict) else None
+    if not isinstance(usage, dict):
+        raise ProviderError(f"{vendor} API omitted usage accounting.")
+    tokens_in, tokens_out = usage.get(in_key), usage.get(out_key)
+    if isinstance(tokens_in, bool) or isinstance(tokens_out, bool):
+        raise ProviderError(
+            f"{vendor} API returned invalid usage accounting.")
+    try:
+        tokens_in, tokens_out = int(tokens_in), int(tokens_out)
+    except (TypeError, ValueError) as exc:
+        raise ProviderError(
+            f"{vendor} API omitted usage accounting.") from exc
+    if tokens_in < 0 or tokens_out < 0:
+        raise ProviderError(
+            f"{vendor} API returned invalid usage accounting.")
+    return tokens_in, tokens_out
+
+
 class BaseAdapter:
     """One AI vendor behind the unified interface."""
 

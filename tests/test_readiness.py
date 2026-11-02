@@ -293,15 +293,19 @@ class TestTenAccountJourneys(ReadinessCase):
                 self._authed("ava.t10@example.org", method="POST"),
                 conv_id=cid, csrf_token=self._csrf("ava.t10@example.org"))
             self.assertEqual(resp.status_code, 303)
+        # Hackathon compliance: the summary action appends no
+        # applicant verdict to recruitment chats.
         resp = chats_route.convo_recommend(
             self._authed("ben.t10@example.org", method="POST"),
             conv_id=cid, csrf_token=self._csrf("ben.t10@example.org"))
         self.assertEqual(resp.status_code, 303)
         conn = self._conn()
         try:
-            text = engine.generate_recommendation(conn, cid)
-            self.assertIn("Frontend Developer", text)
-            self.assertIn("does not hire", text)
+            blob = "\n".join(
+                m["body"] for m in engine.list_messages(conn, cid))
+            for banned in ("RECOMMENDED", "PROMISING", "WEAK fit",
+                           "Verdict", "Recruitment summary"):
+                self.assertNotIn(banned, blob)
             conv = engine.get_conversation(conn, cid)
             self.assertEqual(conv["status"], "active")
             audit = list(conn.execute(
@@ -391,7 +395,9 @@ class TestTenAccountJourneys(ReadinessCase):
         finally:
             conn.close()
 
-    def test_weak_verdict_tier(self):
+    def test_no_verdict_tiers_anywhere(self):
+        # Hackathon compliance: no RECOMMENDED/PROMISING/WEAK verdict
+        # tiers exist, even for weak-fit coordination chats.
         self._setup_ten()
         opp = self._post_job("jon.t10@example.org", "Senior Platform Engineer",
                              "Python, Kubernetes, Go, System Design, AWS",
@@ -408,11 +414,16 @@ class TestTenAccountJourneys(ReadinessCase):
         chats_route.convo_step(
             self._authed("ava.t10@example.org", method="POST"),
             conv_id=cid, csrf_token=self._csrf("ava.t10@example.org"))
+        chats_route.convo_recommend(
+            self._authed("ava.t10@example.org", method="POST"),
+            conv_id=cid, csrf_token=self._csrf("ava.t10@example.org"))
         conn = self._conn()
         try:
-            text = engine.generate_recommendation(conn, cid)
-            self.assertIn("WEAK", text)
-            self.assertIn("owner decides", text.lower())
+            blob = "\n".join(
+                m["body"] for m in engine.list_messages(conn, cid))
+            for banned in ("RECOMMENDED", "PROMISING", "WEAK fit",
+                           "Verdict", "Recruitment summary"):
+                self.assertNotIn(banned, blob)
         finally:
             conn.close()
 

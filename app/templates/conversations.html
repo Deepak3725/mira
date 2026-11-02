@@ -2,7 +2,7 @@
 {% block title %}Conversations — {{ app_name }}{% endblock %}
 {% block content %}
 <section class="page-head narrow">
-  <h1>Twin conversations</h1>
+  <h1>My Conversation</h1>
   <p class="lede">Twins talk to twins. Owners watch, pause, add notes, and keep every final decision.</p>
 </section>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
@@ -10,7 +10,7 @@
 <section class="chat-panel" aria-label="My conversations">
   <div class="chat-panel-head">
     <img src="/static/img/empty-chat.svg" alt="" />
-    <h2>My conversations</h2>
+    <h2>Conversations</h2>
   </div>
   {% if mine %}
   <ul class="convo-list">

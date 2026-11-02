@@ -5,6 +5,7 @@ Uses explicit temp-database paths so the module runs on SQLite locally
 and on Postgres when MIRA_TEST_DATABASE_URL is configured.
 """
 
+import json
 import os
 import tempfile
 import unittest
@@ -40,6 +41,7 @@ from app.seed import (
     seed_demo_drivers,
     seed_demo_memories,
     seed_demo_opportunities,
+    seed_demo_requests,
 )
 
 
@@ -71,6 +73,43 @@ class SeedCase(unittest.TestCase):
 
     def _conn(self):
         return get_connection(self.db)
+
+
+class TestCleanSeed(SeedCase):
+    def test_drivers_without_offerings(self):
+        seed_demo_data(self.db)
+        result = seed_demo_drivers(self.db, include_offerings=False)
+        self.assertEqual(result, {"created": 2, "skipped": 0})
+        conn = self._conn()
+        try:
+            self.assertIsNotNone(
+                get_user_by_email(conn, "dorji.demo@example.com"))
+            self.assertIsNotNone(
+                get_user_by_email(conn, "sonam.demo@example.com"))
+            n = conn.execute(
+                "SELECT COUNT(*) AS n FROM opportunities").fetchone()["n"]
+            self.assertEqual(n, 0)
+            tables = ("requests", "matches", "notifications",
+                      "conversations")
+            for table in tables:
+                count = conn.execute(
+                    f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
+                self.assertEqual(count, 0)
+        finally:
+            conn.close()
+
+    def test_seed_profiles_have_interests(self):
+        seed_demo_data(self.db)
+        conn = self._conn()
+        try:
+            for entry in SEED_USERS:
+                row = get_user_by_email(conn, entry["email"])
+                twin = get_twin_by_user(conn, row["id"])
+                profile = json.loads(twin["profile_json"])
+                self.assertTrue(profile.get("interests"),
+                                entry["email"])
+        finally:
+            conn.close()
 
 
 class TestDemoCredentials(SeedCase):
@@ -146,12 +185,14 @@ class TestDemoCredentials(SeedCase):
 class TestSeedIdempotency(SeedCase):
     def test_second_run_creates_nothing(self):
         first = seed_demo_data(self.db)
-        self.assertEqual(first, {"created": 4, "skipped": 0})
+        self.assertEqual(
+            first, {"created": len(SEED_USERS), "skipped": 0})
         seed_demo_opportunities(self.db)
         seed_demo_memories(self.db)
         seed_demo_conversation(self.db)
         again = seed_demo_data(self.db)
-        self.assertEqual(again, {"created": 0, "skipped": 4})
+        self.assertEqual(
+            again, {"created": 0, "skipped": len(SEED_USERS)})
         self.assertEqual(
             seed_demo_opportunities(self.db), {"created": 0, "skipped": 4})
         self.assertEqual(
@@ -167,7 +208,8 @@ class TestSeedIdempotency(SeedCase):
                 "SELECT COUNT(*) AS n FROM conversations").fetchone()["n"]
         finally:
             conn.close()
-        self.assertEqual((users, twins, convs), (4, 4, 1))
+        n = len(SEED_USERS)
+        self.assertEqual((users, twins, convs), (n, n, 1))
 
     def test_existing_password_never_overwritten(self):
         from app.auth import hash_password
@@ -205,7 +247,8 @@ class TestSeedIdempotency(SeedCase):
         finally:
             conn.close()
         result = seed_demo_data(self.db)
-        self.assertEqual(result, {"created": 0, "skipped": 4})
+        self.assertEqual(
+            result, {"created": 0, "skipped": len(SEED_USERS)})
         conn = self._conn()
         try:
             row = get_user_by_email(conn, "pema.demo@example.com")
@@ -403,9 +446,13 @@ class TestLiveRecruitmentFlow(SeedCase):
             messages = engine.list_messages(conn, cid)
             self.assertGreaterEqual(len(messages), 4)
             self.assertTrue(all(m["provider"] == "mock" for m in messages))
-            text = engine.generate_recommendation(conn, cid)
-            self.assertIn("RECOMMENDED", text)
-            self.assertIn("does not hire", text)
+            # Hackathon compliance: no verdict is produced; the
+            # seeded coordination chat carries no assessment output.
+            self.assertFalse(hasattr(engine, "generate_recommendation"))
+            blob = "\n".join(m["body"] for m in messages)
+            for banned in ("RECOMMENDED", "PROMISING", "WEAK fit",
+                           "Verdict", "Recruitment summary"):
+                self.assertNotIn(banned, blob)
             engine.pause_conversation(conn, cid, karma_id)
             with self.assertRaises(engine.ConversationError):
                 engine.step_conversation(conn, cid, deepak_id)
@@ -458,6 +505,23 @@ class TestLiveRecruitmentFlow(SeedCase):
                 self.assertNotIn(secret, bodies)
         finally:
             conn.close()
+
+    def test_demo_requests_seed_open_and_idempotent(self):
+        self._seed_all()
+        first = seed_demo_requests(self.db)
+        self.assertEqual(first, {"created": 2, "skipped": 0})
+        conn = self._conn()
+        try:
+            rows = list(conn.execute(
+                "SELECT * FROM requests WHERE idempotency_key LIKE 'demo-seed-%'"))
+            self.assertEqual(len(rows), 2)
+            for row in rows:
+                self.assertEqual(row["status"], "open")
+                self.assertTrue(need_engine.is_shared(row))
+        finally:
+            conn.close()
+        second = seed_demo_requests(self.db)
+        self.assertEqual(second, {"created": 0, "skipped": 2})
 
     def test_pema_request_shortlists_tashi_gig(self):
         self._seed_all()

@@ -18,7 +18,7 @@ from ..types import (
     ProviderNotConfigured,
     ToolCall,
 )
-from .base import BaseAdapter
+from .base import BaseAdapter, strict_usage
 
 API_URL = "https://api.openai.com/v1/chat/completions"
 MAX_TOOL_ROUNDS = 5
@@ -43,12 +43,8 @@ class OpenAIAdapter(BaseAdapter):
 
     @staticmethod
     def _usage(data: dict) -> tuple[int, int]:
-        try:
-            usage = data.get("usage", {}) or {}
-            return (int(usage.get("prompt_tokens", 0)),
-                    int(usage.get("completion_tokens", 0)))
-        except (TypeError, ValueError):
-            return 0, 0
+        return strict_usage(data, "usage", "prompt_tokens",
+                            "completion_tokens", "OpenAI")
 
     @staticmethod
     def _message(data: dict) -> dict:
@@ -119,7 +115,15 @@ class OpenAIAdapter(BaseAdapter):
                 "max_tokens": 1000, "temperature": 0.7},
                 self._headers())
             message = self._message(data)
-            tok_in, tok_out = self._usage(data)
+            try:
+                tok_in, tok_out = self._usage(data)
+            except ProviderError as exc:
+                # Earlier rounds parsed fine: keep their real usage
+                # and flag this round uncertain (mirrors Meta).
+                raise ProviderError(
+                    str(exc), tokens_in=total_in,
+                    tokens_out=total_out,
+                    uncertain_extra=True) from exc
             total_in += tok_in
             total_out += tok_out
             calls = []
@@ -156,4 +160,5 @@ class OpenAIAdapter(BaseAdapter):
                 thread.append({"role": "tool", "tool_call_id": call.id,
                                "content": json.dumps(output, default=str)[:4000]})
         raise ProviderError("OpenAI API: tool loop did not finish in"
-                            f" {MAX_TOOL_ROUNDS} rounds.")
+                            f" {MAX_TOOL_ROUNDS} rounds.",
+                            tokens_in=total_in, tokens_out=total_out)

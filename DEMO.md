@@ -1,63 +1,107 @@
-# MIRA — 2-Minute Demo Script
+# MIRA Demo Guide
 
-Setup: `pip install -r requirements.txt && python -m app.seed`, then
-`uvicorn app.main:app --host 127.0.0.1 --port 8000`.
+MIRA is a personal AI twin network: every user gets a twin that
+knows what they approved, finds things for them, and coordinates
+with other twins. Owners keep every decision. Presenters follow
+[DEMO_PLAYBOOK.md](DEMO_PLAYBOOK.md); this file is the setup and
+tour reference.
 
-Demo logins (password pattern `mira-<name>-demo`):
+## Setup
 
-| Who | Email | Twin |
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+pip install -r requirements-test.txt   # for the test suites
+copy .env.example .env
+```
+
+Seed an explicit demo database (idempotent: safe to rerun; never wipes).
+`--clean` seeds users, twins, profiles, and memories only — no
+prearranged needs, offers, matches, notifications, or conversations:
+
+```powershell
+$env:AI_PROVIDER='mock'
+.\.venv\Scripts\python.exe -m app.seed --db data/demo.db --clean
+```
+
+Run the server against that same database (mock brain: $0, deterministic):
+
+```powershell
+$env:AI_PROVIDER='mock'; $env:DATABASE_PATH='data/demo.db'
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Fresh state
+between takes: stop the server, `Remove-Item data/demo.db*`,
+reseed with `--clean`, restart.
+
+## Demo logins (password pattern `mira-<name>-demo`)
+
+| Who (role) | Email | Twin |
 | --- | --- | --- |
-| Deepak (job seeker) | deepak.demo@example.com | Dee |
-| Karma (employer) | karma.demo@example.com | Kay |
+| Deepak (full-stack developer) | deepak.demo@example.com | Dee |
+| Karma (studio lead) | karma.demo@example.com | Kay |
 | Pema (designer) | pema.demo@example.com | Pem |
 | Tashi (freelancer) | tashi.demo@example.com | Tash |
+| Choden (junior analyst) | choden.demo@example.com | Cho |
+| Tshering (counsellor, strict privacy) | tshering.demo@example.com | Tshe |
+| Wangchuk (researcher) | wangchuk.demo@example.com | Wang |
+| Dema (illustrator) | dema.demo@example.com | Dem |
+| Dorji (city taxi) | dorji.demo@example.com | Dor |
+| Sonam (long-trip taxi) | sonam.demo@example.com | Son |
 
-## Taxi run (bot-to-bot, say this)
+Seeded demo state: 10 users + twins with populated profiles and
+interests, approved + pending memories. No requests, offers,
+matches, notifications, or conversations until you create them.
 
-"Now the same network does services. Deepak tells his twin he needs a taxi
-from GCIT to Thimphu tomorrow at 9 AM, max Nu. 500. Watch: the twin drafts
-the requirements, Deepak confirms, the network ranks drivers without any AI
-calls, and the twins talk using only approved facts. Deepak's Nu. 500 ceiling
-is never shared — providers quote, his side filters, he decides."
+## The product in five pages
 
-1. Log in as Deepak → **Requests** → **New request** → paste the taxi need.
-2. Review the parsed draft → Confirm → shortlist: City Taxi in, Premium out
-   (over budget, stated honestly).
-3. Contact Dor's twin → Auto-play → ask "What is your rate?" via owner note
-   → Generate summary → record decision.
-4. **AI usage** page: still $0.00, every call logged as mock.
+- **Find Something** (`/find`) — talk to your twin in words. It
+  searches, asks one targeted question only when a real gap blocks
+  discovery, shows genuine result cards, and honestly reports when
+  nothing exists yet. The search persists and keeps matching.
+- **Post Something** (`/post`) — describe a need or offer in one
+  box. The twin infers the type and details, you review and
+  publish, publishing triggers real discovery.
+- **My Conversation** (`/conversations`) — real persisted twin
+  coordination, per-owner decisions, pause/resume, notes.
+- **Notification** (`/notifications`) — real events linked to
+  their search, post, or chat.
+- **Twins** (`/dashboard`) — create and manage your twin, review
+  sharing permissions, browse public twins.
 
-## The story (say this)
+Old form flows (`/requests/new`, `/opportunities/new`,
+`/discover`) still work but are no longer the product surface.
 
-"CVs are static. MIRA lets you talk to someone's AI twin instead. Every twin
-shares only what its owner approved — watch the owners stay in control.
-The journey is: create your twin, teach it, test it, activate it — the demo
-cast just shows what's possible."
+## Core moves
 
-## Click path
+1. **Find:** Deepak opens Find Something and types
+   `I'm looking for a full-stack developer job in Bhutan.` The twin
+   uses his profile and searches; with no offer yet it says so.
+2. **Post:** Karma opens Post Something and types
+   `I'm hiring a full-stack developer for my team...` Reviews the
+   inferred offer (Type Offer, skills, location) and publishes.
+   Matching triggers instantly.
+3. **Match:** Deepak's Notification shows New match; his chat shows
+   the posting card with a relevance reason.
+4. **Decide:** Each owner accepts independently from the search or
+   posting view; acceptance starts a coordination chat.
+5. **Coordinate:** My Conversation shows the real chat. Auto-play
+   exchanges authorized facts; Record decision captures each
+   owner's Interested/Not interested separately.
+6. **Beyond jobs:** the same two pages handle taxis
+   (`I need a taxi from Thimphu to Dagana tomorrow. I need four
+   seats.`), piano lessons, rentals, and custom needs — one engine,
+   no special cases.
+7. **Import:** Twins → Memories accepts a self-exported
+   `conversations.json` (try `tests/fixtures/sample_export.json`),
+   queues items for review, and only approved knowledge is used.
 
-1. **/** — "Personal AI twins that talk to each other."
-2. **Twins** (`/dashboard`) — four demo twins, mascots, top matches each.
-3. **Discover** (`/discover?twin_id=1`) — "Deepak's twin found Karma's Backend
-   Developer: match 85/100, missing GraphQL — and here's exactly why."
-4. **Log in as Deepak** → open the Backend Developer posting → **"Have Dee
-   contact Kay"** → Auto-play 6 turns. "Two AIs exchanging only authorized
-   facts. No phone numbers, no salary talk — ask and watch it deflect."
-5. **Generate recommendation** — "Transparent criteria, and the verdict says
-   the owners decide." Record a decision as Deepak.
-6. **Chats** (`/conversations`) — show the pre-seeded public demo chat.
-7. **Memories** (`/memories`, logged in) — import
-   `tests/fixtures/sample_export.json` (a file you provide yourself — MIRA
-   never connects to AI accounts), approve one item, show it surfacing
-   in a later answer ("From my owner's notes").
-8. **AI usage** (`/usage`) — "Every call counted, hard caps, $0 on mock."
+## Notes
 
-## If asked…
-
-- **Real AI?** "Mock brain today — deterministic and free. The Meta client is
-  implemented against verified docs and budget-guarded, but stays off until
-  billing is verified. Nothing here needs it."
-- **My data?** "New twins are private by default. The privacy filter runs on
-  the server before anything is shared or sent to any model."
-- **Scale?** "Local demo architecture. SQLite + one process; honest limits
-  are in the README."
+- Twins publish and contact only with owner authorization; budgets
+  are never shared with providers; private fields stay private.
+- Match reasons never contain prices or budgets; decisions are
+  always per-owner.
+- Mock provider: every call is logged on the Usage page at $0.
