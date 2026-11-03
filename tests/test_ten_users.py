@@ -769,13 +769,14 @@ class TestJourneyLifecycle(TenCase):
 
 
 class TestJourneyCompliance(TenCase):
-    """Journey 11: hackathon compliance at route level.
+    """Journey 11: matching fairness at route level.
 
-    No hiring category, no applicant scores, no verdicts -- through
-    the same route handlers a browser would hit.
+    Jobs are a first-class category, but relevance is still computed
+    for the viewer's own twin only -- through the same route handlers
+    a browser would hit.
     """
 
-    def test_hiring_speak_never_becomes_job_request(self):
+    def test_job_category_preserved_on_requests(self):
         from app.routes import requests as requests_route
 
         email = "dorji.ten@fictional.invalid"
@@ -792,10 +793,10 @@ class TestJourneyCompliance(TenCase):
             req = conn.execute(
                 "SELECT category FROM requests WHERE id = ?",
                 (req_id,)).fetchone()
-            self.assertEqual(req["category"], "other")
+            self.assertEqual(req["category"], "job")
         finally:
             conn.close()
-        # Confirming with category=job also lands on "other".
+        # Confirming with category=job keeps "job".
         resp = requests_route.request_confirm(
             self._authed(email, f"/requests/{req_id}/confirm", "POST"),
             req_id=req_id, category="job", budget="", origin="",
@@ -807,7 +808,7 @@ class TestJourneyCompliance(TenCase):
             req = conn.execute(
                 "SELECT category FROM requests WHERE id = ?",
                 (req_id,)).fetchone()
-            self.assertEqual(req["category"], "other")
+            self.assertEqual(req["category"], "job")
         finally:
             conn.close()
 

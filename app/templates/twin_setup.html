@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Guided twin setup — {{ app_name }}{% endblock %}
+{% block content %}
+<section class="page-head narrow"><p class="back"><a href="/twin/new">&larr; Create twin</a></p><h1>Guided text setup</h1><p class="lede">Answer or skip each question. Nothing is saved until you review and submit the existing twin form.</p></section>
+{% if reply %}<p class="form-note" role="status">{{ reply }}</p>{% endif %}
+<form class="chat-form" method="post" action="/twin/setup"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"/><input type="hidden" name="state" value='{{ state | e }}'/>
+{% if phase == 'review' %}<button class="button" name="message" value="Continue to profile form">Continue to profile form</button><button class="button secondary" name="message" value="summary">Review summary</button>{% else %}<label for="setup-message">Your answer</label><input id="setup-message" name="message" maxlength="2000" autofocus/><button class="button" type="submit">Next</button><button class="button secondary" name="message" value="skip">Skip</button>{% endif %}</form>
+{% endblock %}

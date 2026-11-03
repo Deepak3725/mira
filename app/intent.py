@@ -63,17 +63,19 @@ INTENT_SCHEMA: dict[str, Any] = {
 }
 
 _ENTITY_LABELS = {
-    "transport": "ride", "service": "service",
+    "transport": "ride", "job": "job", "service": "service",
     "supply": "supplier", "collaboration": "collaborator", "other": "request",
 }
 
 _CLARIFICATIONS = {
     "transport": ("Where should the trip start and end, and when do you need it? "
                   "Add a maximum budget if you have one."),
+    "job": ("What skills should I search with, and where? "
+            "Your twin's skills are used automatically when you have shared them."),
     "service": "What exactly do you need done, and where and when?",
     "supply": "What product and quantity do you need, and where should it go?",
     "collaboration": "What project or goal is the collaboration about, and what skills are needed?",
-    "other": ("What kind of help do you need -- for example a ride, "
+    "other": ("What kind of help do you need -- for example a job, a ride, "
               "a service, a supplier, or a collaborator? One sentence is enough."),
 }
 

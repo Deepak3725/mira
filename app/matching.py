@@ -25,6 +25,12 @@ from typing import Any
 from . import privacy
 from .db import list_opportunities
 
+
+def _now_stamp() -> str:
+    import datetime as _dt
+
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
 SKILL_WEIGHT = 60.0
 EXPERIENCE_WEIGHT = 20.0
 LOCATION_WEIGHT = 20.0
@@ -185,8 +191,11 @@ def find_matches(
     loc_filter = _norm(location_filter)
 
     results: list[dict[str, Any]] = []
+    now = _now_stamp()
     for opp in list_opportunities(conn, status=status):
         if not include_own and opp["owner_user_id"] == twin["user_id"]:
+            continue
+        if status == "open" and offer_expired(opp, now):
             continue
         required = _json_list(opp["required_skills_json"])
         if wanted_skills and not (wanted_skills & {_norm(s) for s in required}):
@@ -260,6 +269,30 @@ def _offer_price(attrs: dict) -> float | None:
     return None
 
 
+def _salary_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value < 0:
+        return None
+    return float(value)
+
+
+def offer_expired(opp: Row, now: str) -> bool:
+    """True when an offer's search duration has elapsed (TEXT/datetime)."""
+    try:
+        value = opp["expires_at"]
+    except (KeyError, IndexError, TypeError):
+        return False
+    if not value:
+        return False
+    if hasattr(value, "strftime"):
+        try:
+            value = str(value.strftime("%Y-%m-%d %H:%M:%S"))
+        except (ValueError, TypeError):
+            return False
+    return str(value)[:19] <= str(now)[:19]
+
+
 def _str_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -303,6 +336,22 @@ def score_provider(requirements: dict, attributes: dict) -> ProviderMatch:
             score=0, explanation="", price_points=0.0, place_points=0.0,
             avail_points=0.0, tag_points=0.0,
             excluded_reason=f"Over budget ({price:g} > {budget:g}).")
+    req_min = _salary_number(req.get("salary_min"))
+    req_max = _salary_number(req.get("salary_max"))
+    off_min = _salary_number(attrs.get("salary_min"))
+    off_max = _salary_number(attrs.get("salary_max"))
+    # Disjoint salary ranges never match; figures stay out of the reason
+    # because match reasons surface to both sides.
+    if req_min is not None and off_max is not None and req_min > off_max:
+        return ProviderMatch(
+            score=0, explanation="", price_points=0.0, place_points=0.0,
+            avail_points=0.0, tag_points=0.0,
+            excluded_reason="Salary expectation above the offered range.")
+    if off_min is not None and req_max is not None and off_min > req_max:
+        return ProviderMatch(
+            score=0, explanation="", price_points=0.0, place_points=0.0,
+            avail_points=0.0, tag_points=0.0,
+            excluded_reason="Salary offer above the stated range.")
     if budget is None or price is None:
         price_points, price_note = PRICE_WEIGHT / 2, "Price fit unknown"
     else:
@@ -371,9 +420,12 @@ def find_providers(
     """
     requirements = _as_dict(req["requirements_json"])
     results: list[dict[str, Any]] = []
+    now = _now_stamp()
     for opp in list_opportunities(conn, status="open",
                                   limit=candidate_cap):
         if opp["owner_user_id"] == req["owner_user_id"]:
+            continue
+        if offer_expired(opp, now):
             continue
         # Skill-based offerings (jobs, gigs) carry their tags as
         # required skills; surface them to the tag signal instead

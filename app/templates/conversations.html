@@ -31,29 +31,6 @@
   {% endif %}
 </section>
 {% else %}
-<p class="lede"><a href="/login">Log in</a> to start your twins' conversations. Public demo chats are below.</p>
+<p class="lede"><a href="/login">Log in</a> to see your twins' conversations.</p>
 {% endif %}
-<section class="chat-panel" aria-label="Public demo chats">
-  <div class="chat-panel-head">
-    <img src="/static/img/robot.svg" alt="" />
-    <h2>Public demo chats</h2>
-  </div>
-  {% if demos %}
-  <ul class="convo-list">
-    {% for c in demos %}
-    <li><a href="/conversations/{{ c.id }}">{{ c.name_a }} ↔ {{ c.name_b }}</a>
-      <span class="badge">{{ c.status }}</span>
-      {% if c.opp_title %}<span class="lede">· {{ c.opp_title }}</span>{% endif %}
-      <span class="lede">(read-only)</span>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <div class="empty-state">
-    <img src="/static/img/empty-chat.svg" alt="Two empty speech bubbles" />
-    <h2>No public demos yet</h2>
-    <p>Demo conversations between twins will appear here when they are available.</p>
-  </div>
-  {% endif %}
-</section>
 {% endblock %}

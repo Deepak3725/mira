@@ -424,8 +424,8 @@ class TestMemoryEngine(unittest.TestCase):
         version = self.conn.execute(
             "SELECT version FROM schema_version WHERE id = 1").fetchone()
         self.assertEqual(version["version"], SCHEMA_VERSION)
-        # v14 adds twin_chats (Find Something history).
-        self.assertEqual(SCHEMA_VERSION, 14)
+        # v15 adds opportunities.expires_at + matches.accept_message.
+        self.assertEqual(SCHEMA_VERSION, 15)
 
     def test_category_and_time_stored(self):
         mem_id = memories.create_memory(

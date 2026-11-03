@@ -69,8 +69,9 @@ class M1Case(unittest.TestCase):
 
 
 class TestSamples(unittest.TestCase):
-    # NOTE (hackathon compliance): hiring-speak ("Find a React
-    # developer...") parses as "other", not a job-hiring category.
+    # Role phrases without job keywords ("Find a React developer...")
+    # stay "other" deterministically; hiring keywords ("hiring",
+    # "salary", "employee", ...) parse as "job".
     def test_samples_map_to_categories(self):
         seen = set()
         for text, category in SAMPLES:
@@ -179,9 +180,9 @@ class TestMetaRefinement(M1Case):
         self.assertEqual(out["category"], "service")
         self.assertEqual(out["requirements"]["skills"], ["ML"])
 
-    def test_legacy_job_category_normalized_to_other(self):
-        # A model returning the removed hiring category must not
-        # reintroduce it: deterministic "other" wins.
+    def test_job_category_accepted_from_model(self):
+        # Jobs are a first-class category: when the deterministic pass is
+        # unsure ("other"), a model "job" label is accepted, not dropped.
         payload = {"category": "job", "entity": "dev shop",
                    "requirements": {"skills": ["React"]},
                    "needs_twin_search": True, "clarification": "",
@@ -189,7 +190,7 @@ class TestMetaRefinement(M1Case):
         provider, _ = _meta_provider(payload)
         out = interpret_need(JOB, conn=self.conn,
                              user_id=self.deepak["id"], provider=provider)
-        self.assertEqual(out["category"], "other")
+        self.assertEqual(out["category"], "job")
         self.assertEqual(out["source"], "meta")
 
     def test_invalid_category_sanitized(self):
@@ -330,7 +331,8 @@ class TestFailureAccounting(M1Case):
             raise TimeoutError("simulated timeout")
         out = self._run(slow)
         self.assertEqual(out["source"], "mock-refined")
-        self.assertEqual(out["requirements"], {})
+        # Deterministic facts survive the outage (role-phrase skill).
+        self.assertEqual(out["requirements"], {"skills": ["React"]})
         rows = self._rows()
         self.assertEqual(rows[0]["status"], "failed_unknown")
         self.assertIn("timeout", rows[0]["notes"].lower())

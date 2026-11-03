@@ -8,12 +8,12 @@
 <section>
   <h2>My twin journey</h2>
   <ol class="journey">
-    <li class="{% if twin %}done{% endif %}"><strong>Create</strong> — {% if twin %}<a href="/twin/edit">twin "{{ twin.display_name }}" ready</a>{% else %}<a href="/twin/new">create your twin</a>{% endif %}</li>
-    <li class="{% if approved_memories %}done{% endif %}"><strong>Teach</strong> — <a href="/memories">{% if approved_memories %}{{ approved_memories }} approved memories{% else %}import knowledge for review{% endif %}</a></li>
-    <li><strong>Talk</strong> — <a href="/voice">talk to your twin by voice or text</a></li>
-    <li class="{% if convos %}done{% endif %}"><strong>Test</strong> — <a href="/discover">discover matches</a> and start a twin chat</li>
-    <li><strong>Activate</strong> — list your twin publicly from <a href="/twin/edit">twin settings</a> and let it represent you</li>
-    <li><strong>Control</strong> — set <a href="/twin/edit">conditions</a>, pause any <a href="/conversations">chat</a>, and record every decision yourself</li>
+    {% if twin %}
+    <li class="done"><strong>Update Your Twin</strong> — <a href="/twin/edit">twin "{{ twin.display_name }}" ready</a></li>
+    {% else %}
+    <li><strong>Create Your Twin</strong> — <a href="/twin/new">create your twin</a></li>
+    {% endif %}
+    <li class="{% if approved_memories %}done{% endif %}"><strong>Teach Your Twin</strong> — <a href="/memories">{% if approved_memories %}{{ approved_memories }} approved memories{% else %}share knowledge for review{% endif %}</a></li>
   </ol>
 </section>
 <section class="me-grid">
@@ -25,7 +25,6 @@
     <p class="controls">
       <a class="button" href="/twin/edit">Edit twin</a>
       <a class="button secondary" href="/memories">Memories</a>
-      <a class="button secondary" href="/voice">Voice</a>
       <a class="button secondary" href="/usage">AI usage</a>
     </p>
     {% else %}

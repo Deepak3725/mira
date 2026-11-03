@@ -7,14 +7,30 @@
 </section>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
 {% if not review %}
+<ul class="example-prompts">
+  <li><button type="button" class="chip" data-fill="I am looking for an employee.">I am looking for an employee.</button></li>
+  <li><button type="button" class="chip" data-fill="I am looking for a taxi.">I am looking for a taxi.</button></li>
+  <li><button type="button" class="chip" data-fill="I am looking for something else.">I am looking for something else.</button></li>
+</ul>
 <form class="stack-form" method="post" action="/post">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
   <input type="hidden" name="action" value="draft" />
   <label>What would you like to post?
-    <textarea name="description" rows="4" maxlength="4000" required placeholder="e.g. I'm hiring a full-stack developer for my team in Bhutan.">{{ draft }}</textarea>
+    <textarea name="description" id="post-description" rows="4" maxlength="4000" required placeholder="e.g. I'm hiring a full-stack developer for my team in Bhutan.">{{ draft }}</textarea>
   </label>
   <button class="button" type="submit">Review</button>
 </form>
+<script>
+(function () {
+  var input = document.getElementById("post-description");
+  document.querySelectorAll("[data-fill]").forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      input.value = chip.getAttribute("data-fill");
+      input.focus();
+    });
+  });
+})();
+</script>
 {% else %}
 <section class="card" aria-label="Review your post">
   <h2>Review before publishing</h2>
@@ -42,6 +58,15 @@
     </label>
     <label>Location <input type="text" name="location" maxlength="120" value="{{ review.location }}" /></label>
     <label>Skills (comma-separated) <input type="text" name="skills" value="{{ review.skills_text }}" /></label>
+    <label>Salary min (Nu., optional) <input type="text" name="salary_min" value="{{ review.salary_min }}" /></label>
+    <label>Salary max (Nu., optional) <input type="text" name="salary_max" value="{{ review.salary_max }}" /></label>
+    <label>Search duration
+      <select name="duration">
+        {% for name, minutes in durations %}
+        <option value="{{ name }}"{% if name == review.duration %} selected{% endif %}>{{ name if name != "none" else "No deadline" }}</option>
+        {% endfor %}
+      </select>
+    </label>
     {% if review.kind != "offer" %}
     <label>How many do you need? <input type="number" name="quantity" min="1" max="99" value="{{ review.quantity }}" /></label>
     {% endif %}

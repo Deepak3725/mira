@@ -194,9 +194,11 @@ class TestSingleAccountReach(DemoFlowCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.body.decode("utf-8")
         for marker in ("My twin journey", "My twin", "My conversations",
-                       "/twin/edit", "/memories", "/voice", "/usage",
-                       "/discover", "/conversations"):
+                       "/twin/edit", "/memories", "/usage",
+                       "/conversations"):
             self.assertIn(marker, body)
+        for gone in ("/voice", "Talk", "Test", "Activate", "Control"):
+            self.assertNotIn(gone, body)
 
 
 if __name__ == "__main__":

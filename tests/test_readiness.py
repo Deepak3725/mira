@@ -38,7 +38,6 @@ from app.routes import memories as memories_route
 from app.routes import pages as pages_route
 from app.routes import projects as projects_route
 from app.routes import requests as requests_route
-from app.routes import voice as voice_route
 from app.seed import (
     seed_demo_conversation,
     seed_demo_data,
@@ -99,8 +98,6 @@ def _request(path="/", cookie=None, method="GET"):
 
 class ReadinessCase(unittest.TestCase):
     def setUp(self):
-        from app.voice import session as voice_session
-
         self.tmp = tempfile.TemporaryDirectory()
         self.db = str(Path(self.tmp.name) / "ready.db")
         init_db(self.db)
@@ -110,7 +107,6 @@ class ReadinessCase(unittest.TestCase):
         seed_demo_memories(self.db)
         seed_demo_conversation(self.db)
         auth.reset_rate_limits()
-        voice_session._sessions.clear()
         self._saved_env = os.environ.get("DATABASE_PATH")
         os.environ["DATABASE_PATH"] = self.db
         self._saved_settings = db_mod.settings
@@ -646,13 +642,14 @@ class TestIsolationAndRobustness(ReadinessCase):
         finally:
             conn.close()
 
-    def test_private_twin_hidden_from_dashboard(self):
+    def test_dashboard_shows_only_own_twin(self):
         self._setup_ten()
         resp = pages_route.dashboard(self._authed("ava.t10@example.org",
                                                   "/dashboard"))
         body = resp.body.decode("utf-8")
         self.assertIn("AvaTwin", body)
         self.assertNotIn("HanTwin", body)
+        self.assertNotIn("Public twins", body)
 
     def test_invalid_inputs_rejected_safely(self):
         self._setup_ten()
@@ -722,21 +719,27 @@ class TestIsolationAndRobustness(ReadinessCase):
         # Ten setup registrations already consumed the hourly IP budget.
         self.assertTrue(all(c == 400 for c in codes))
 
-    def test_voice_teach_and_approve_flow(self):
+    def test_manual_teach_and_approve_flow(self):
         self._setup_ten()
         email = "eli.t10@example.org"
-        first = voice_route.voice_command(
-            self._authed(email, "/voice/command", "POST"),
-            transcript="remember this: Eli prefers morning deploys",
-            provider="text", csrf_token=self._csrf(email))
-        self.assertEqual(first.status_code, 200)
-        self.assertIn("pending", json.loads(first.body.decode("utf-8"))["text"])
-        second = voice_route.voice_command(
-            self._authed(email, "/voice/command", "POST"),
-            transcript="approve latest", provider="text",
+        first = memories_route.memory_add(
+            self._authed(email, "/memories/add", "POST"),
+            content="Eli prefers morning deploys.", category="preference",
             csrf_token=self._csrf(email))
-        self.assertIn("Approved",
-                      json.loads(second.body.decode("utf-8"))["text"])
+        self.assertEqual(first.status_code, 303)
+        conn = self._conn()
+        try:
+            twin = get_twin_by_user(conn, self.accts[email]["uid"])
+            pending = list_memories(conn, twin["id"], "pending")
+            mem_id = next(m["id"] for m in pending
+                          if "morning deploys" in m["content"])
+        finally:
+            conn.close()
+        second = memories_route.memory_approve(
+            self._authed(email, f"/memories/{mem_id}/approve", "POST"),
+            mem_id=mem_id, content="",
+            csrf_token=self._csrf(email))
+        self.assertEqual(second.status_code, 303)
         conn = self._conn()
         try:
             twin = get_twin_by_user(conn, self.accts[email]["uid"])

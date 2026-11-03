@@ -25,7 +25,6 @@ from .routes import (
     projects,
     requests,
     twin,
-    voice,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -215,4 +214,3 @@ app.include_router(pages.router)
 app.include_router(projects.router)
 app.include_router(channels.router)
 app.include_router(twin.router)
-app.include_router(voice.router)

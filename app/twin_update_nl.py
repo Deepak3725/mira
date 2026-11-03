@@ -3,7 +3,7 @@
 Parses commands like "remove Frontend Developer from my skills and
 add Fullstack Developer" into field operations, applies them to the
 owner's twin only, and reports before/after. One-step undo restores
-the previous snapshot. Shared by voice and typed text.
+the previous snapshot. Used only by typed text interactions.
 """
 
 from __future__ import annotations
@@ -20,11 +20,7 @@ FIELDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "skills": ("list", ("skill", "skills")),
     "interests": ("list", ("interest", "interests", "hobby",
                            "hobbies")),
-    "preferences": ("list", ("preference", "preferences", "likes")),
-    "requirements": ("list", ("requirement", "requirements")),
-    "education": ("text", ("education", "school", "degree",
-                           "university", "college")),
-    "experience": ("text", ("experience", "work history", "career")),
+        "requirements": ("list", ("requirement", "requirements")),
     "headline": ("text", ("headline", "title", "tagline",
                           "professional title")),
     "bio": ("text", ("bio", "about", "description", "background",
@@ -32,14 +28,20 @@ FIELDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "company": ("text", ("company", "employer", "workplace")),
     "location": ("text", ("location", "city", "based")),
     "availability": ("text", ("availability", "available")),
-    "goals": ("text", ("goal", "goals")),
-    "tone": ("twin", ("tone", "style", "communication style",
-                      "voice")),
+    "experience_years": ("number", ("experience years", "years of experience")),
+    "tone": ("twin", ("tone", "style", "communication style")),
     "display_name": ("twin", ("name", "display name", "twin name")),
     "persona": ("twin", ("persona", "personality")),
+    "role": ("text", ("professional role", "role")),
+    "portfolio_url": ("text", ("portfolio link", "portfolio url")),
 }
 
 _SPLIT = re.compile(r"\s+(?:and|then)\s+|[;.]")
+
+
+def is_update_command(text: str) -> bool:
+    """Detect explicit profile-edit/undo wording, not job searches."""
+    return bool(re.search(r"\b(?:update|edit|change)\s+my\s+(?:twin|profile)\b|\b(?:add|remove|delete|drop|clear|reset|set|replace|change)\b.{0,120}\bmy\s+(?:skills?|interests?|requirements?|headline|bio|company|location|availability|experience years|years of experience|role|portfolio|name|tone|persona)\b|\b(?:undo|revert)\s+(?:my\s+)?(?:last\s+)?(?:twin\s+)?update\b", text or "", re.I))
 
 
 def field_from_words(text: str) -> str | None:
@@ -68,6 +70,7 @@ def parse_update(text: str, default_field: str | None = None) -> dict:
     field established by an earlier prompt.
     """
     cleaned = " ".join((text or "").split())
+    cleaned = re.sub(r"^(?:update|edit|change) my (?:twin|profile)\s*[:,]?\s*", "", cleaned, flags=re.I)
     ops: list[dict] = []
     errors: list[str] = []
     segments = [s.strip(" .!?") for s in _SPLIT.split(cleaned)
@@ -217,6 +220,8 @@ def _get_field(row: dict, profile: dict, field: str):
     value = profile.get(field)
     if kind == "list":
         return list(value) if isinstance(value, list) else []
+    if kind == "number":
+        return value if isinstance(value, int) else None
     return value if isinstance(value, str) else ""
 
 
@@ -317,10 +322,17 @@ def preview(conn, twin_id: int, ops: list[dict]) -> dict:
                                 "before": _short(current),
                                 "after": _short(done)})
         elif item["op"] == "set":
+            value = item["values"][0] if item["values"] else ""
+            if kind == "number":
+                try:
+                    value = int(value)
+                    if not 0 <= value <= 80:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    errors.append("Experience years must be a whole number from 0 to 80.")
+                    continue
             accept(item, {"field": field, "before": _short(current),
-                            "after": _short(item["values"][0]
-                                            if item["values"]
-                                            else "")})
+                            "after": _short(value)})
         elif item["op"] == "clear":
             accept(item, {"field": field, "before": _short(current),
                             "after": "(empty)", "destructive": True})
@@ -350,12 +362,15 @@ def _replace_text(current: str, target: str, new: str):
 
 
 def apply(conn, user_id: int, twin_id: int,
-          ops: list[dict]) -> dict:
+          ops: list[dict], *, commit: bool = True) -> dict:
     """Apply ops to the OWNER's twin. Returns changes + undo snapshot."""
     twin = get_twin(conn, twin_id)
     if twin is None or twin["user_id"] != user_id:
         raise ValueError("You can only update your own twin.")
     report = preview(conn, twin_id, ops)
+    if report["errors"]:
+        return {"changes": [], "errors": report["errors"],
+                "undone": None}
     if not report["changes"]:
         return {"changes": [], "errors": report["errors"],
                 "undone": None}
@@ -379,7 +394,8 @@ def apply(conn, user_id: int, twin_id: int,
                         for c in report["changes"])[:400]
     audit(conn, None, "twin.updated", user_id,
           f"twin={twin_id} {summary}")
-    conn.commit()
+    if commit:
+        conn.commit()
     return {"changes": report["changes"], "errors": report["errors"],
             "undone": snap}
 
@@ -387,9 +403,11 @@ def apply(conn, user_id: int, twin_id: int,
 def _apply_value(current, item: dict, kind: str):
     if item["op"] == "set":
         value = item["values"][0] if item["values"] else ""
-        return value[:1000] if kind != "list" else _values(value)
+        if kind == "number":
+            return int(value)
+        return _values(value) if kind == "list" else value[:1000]
     if item["op"] == "clear":
-        return [] if kind == "list" else ""
+        return [] if kind == "list" else (None if kind == "number" else "")
     if kind == "list":
         items = list(current) if isinstance(current, list) else []
         if item["op"] == "add":
@@ -416,19 +434,48 @@ def _apply_value(current, item: dict, kind: str):
     return text
 
 
-def undo(conn, user_id: int, twin_id: int, snap: dict) -> None:
-    """Restore a snapshot from ``apply`` (owner-only)."""
+def scoped_snapshot(twin, fields: set[str]) -> dict:
+    """Record only fields touched by one edit, for non-clobbering undo."""
+    full = snapshot(twin)
+    return {field: (full[field] if FIELDS[field][0] == "twin"
+                    else full["profile"].get(field)) for field in fields}
+
+
+def scoped_snapshot_from_full(snap: dict, fields: list[str]) -> dict:
+    return {field: (snap[field] if FIELDS[field][0] == "twin"
+                    else snap["profile"].get(field)) for field in fields}
+
+
+def undo(conn, user_id: int, twin_id: int, action: dict,
+         *, commit: bool = True) -> dict:
+    """Undo just this edit; preserve fields changed independently later."""
     twin = get_twin(conn, twin_id)
     if twin is None or twin["user_id"] != user_id:
         raise ValueError("You can only update your own twin.")
-    update_twin(conn, twin_id,
-                display_name=snap["display_name"],
-                persona=snap["persona"], tone=snap["tone"],
-                profile=snap["profile"],
-                authorized_fields=snap["authorized_fields"])
-    audit(conn, None, "twin.update_undone", user_id,
-          f"twin={twin_id}")
-    conn.commit()
+    profile = _profile(twin)
+    row = {key: twin[key] for key in ("display_name", "persona", "tone")}
+    restored, conflicts = [], []
+    before, after = action.get("before", {}), action.get("after", {})
+    for field, expected in after.items():
+        kind = FIELDS[field][0]
+        current = row[field] if kind == "twin" else profile.get(field)
+        if current != expected:
+            conflicts.append(field)
+            continue
+        if kind == "twin":
+            row[field] = before.get(field)
+        else:
+            profile[field] = before.get(field)
+        restored.append(field)
+    if restored:
+        update_twin(conn, twin_id, display_name=row["display_name"],
+                    persona=row["persona"], tone=row["tone"],
+                    profile=profile, authorized_fields=_authorized(twin))
+        audit(conn, None, "twin.update_undone", user_id,
+              f"twin={twin_id} fields={','.join(restored)}")
+        if commit:
+            conn.commit()
+    return {"restored": restored, "conflicts": conflicts}
 
 
 def describe(report: dict) -> str:

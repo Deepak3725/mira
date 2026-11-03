@@ -105,10 +105,18 @@ def request_list(request: Request):
                 other = need_engine.get_request(conn, m["counterpart_id"])
                 mine_title = (need_engine.request_title(other["need_text"])
                               if other else "(removed need)")
+            try:
+                accept_message = m["accept_message"] or ""
+            except (KeyError, IndexError, TypeError):
+                accept_message = ""
             incoming.append({
                 "id": m["id"], "status": m["status"],
                 "owner_accepted": m["owner_accepted"],
                 "peer_accepted": m["peer_accepted"],
+                "mutual": matcher.is_mutual(m),
+                "accept_message": accept_message,
+                "contact": matcher.peer_contact_for_match(
+                    conn, m, me["id"]),
                 "reason": m["reason"],
                 "mine_title": mine_title,
                 "counterpart_type": m["counterpart_type"],
@@ -236,8 +244,20 @@ def request_review(request: Request, req_id: int):
          "csrf_token": auth.csrf_for_request(request, me["id"])})
 
 
+def _salary_or_none(value: str) -> float | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        number = float(value.strip().replace(",", ""))
+    except ValueError:
+        return None
+    return number if number >= 0 else None
+
+
 def _requirements_from_form(budget: str, origin: str, destination: str,
-                            when: str, skills: str) -> dict:
+                            when: str, skills: str,
+                            salary_min: str = "",
+                            salary_max: str = "") -> dict:
     req: dict = {}
     budget = (budget or "").strip().replace(",", "")
     if budget:
@@ -256,6 +276,14 @@ def _requirements_from_form(budget: str, origin: str, destination: str,
     parsed_skills = [s.strip()[:60] for s in skills.split(",") if s.strip()][:10]
     if parsed_skills:
         req["skills"] = parsed_skills
+    low = _salary_or_none(salary_min)
+    high = _salary_or_none(salary_max)
+    if low is not None and high is not None and low > high:
+        low, high = high, low
+    if low is not None:
+        req["salary_min"] = low
+    if high is not None:
+        req["salary_max"] = high
     return req
 
 
@@ -266,6 +294,7 @@ def request_confirm(
     budget: str = Form(""), origin: str = Form(""), destination: str = Form(""),
     when: str = Form(""), skills: str = Form(""), csrf_token: str = Form(""),
     duration: str = Form("none"), quantity: str = Form(""),
+    salary_min: str = Form(""), salary_max: str = Form(""),
 ):
     me, redir = _me_or_login(request)
     if redir:
@@ -296,8 +325,9 @@ def request_confirm(
             need_engine.confirm_request(
                 conn, req_id, me["id"],
                 category=category if category in CATEGORIES else "other",
-                requirements=_requirements_from_form(budget, origin, destination,
-                                                     when, skills),
+                requirements=_requirements_from_form(
+                    budget, origin, destination, when, skills,
+                    salary_min, salary_max),
                 expires_at=expires, quantity_requested=qty)
         except need_engine.RequestError:
             raise HTTPException(status_code=404, detail="Request not found")
@@ -309,7 +339,7 @@ def request_confirm(
 
 
 @router.get("/requests/{req_id}", response_class=HTMLResponse)
-def request_detail(request: Request, req_id: int):
+def request_detail(request: Request, req_id: int, notice: str = ""):
     me, redir = _me_or_login(request)
     if redir:
         return redir
@@ -365,10 +395,18 @@ def request_detail(request: Request, req_id: int):
                         other["need_text"])
                 else:
                     counter_title = "(removed need)"
+            try:
+                accept_message = m["accept_message"] or ""
+            except (KeyError, IndexError, TypeError):
+                accept_message = ""
             match_items.append({
                 "id": m["id"], "status": m["status"], "score": m["score"],
                 "reason": m["reason"], "owner_accepted": m["owner_accepted"],
                 "peer_accepted": m["peer_accepted"],
+                "mutual": matcher.is_mutual(m),
+                "accept_message": accept_message,
+                "contact": matcher.peer_contact_for_match(
+                    conn, m, me["id"]),
                 "counterpart_type": m["counterpart_type"],
                 "counter_title": counter_title, "peer_name": peer_name,
                 "peer_twin": peer_twin, "peer_link": peer_link,
@@ -384,6 +422,8 @@ def request_detail(request: Request, req_id: int):
             "origin": reqs.get("origin", ""),
             "destination": reqs.get("destination", ""),
             "when": reqs.get("when_text", ""),
+            "salary_min": reqs.get("salary_min", ""),
+            "salary_max": reqs.get("salary_max", ""),
             "skills": ", ".join(reqs.get("skills", [])
                                 if isinstance(reqs.get("skills"), list)
                                 else []),
@@ -395,6 +435,7 @@ def request_detail(request: Request, req_id: int):
         {"app_name": settings.app_name, "me": me, "req": view,
          "providers": providers, "chats": chats, "matches": match_items,
          "categories": CATEGORIES, "durations": matcher.SEARCH_DURATIONS,
+         "notice": notice,
          "csrf_token": auth.csrf_for_request(request, me["id"])})
 
 
@@ -440,6 +481,7 @@ def request_update(
     budget: str = Form(""), origin: str = Form(""), destination: str = Form(""),
     when: str = Form(""), skills: str = Form(""), csrf_token: str = Form(""),
     duration: str = Form("keep"), quantity: str = Form(""),
+    salary_min: str = Form(""), salary_max: str = Form(""),
 ):
     """Owner edits a confirmed post (text, category, requirements)."""
     me, redir = _me_or_login(request)
@@ -470,8 +512,9 @@ def request_update(
             need_engine.update_need(
                 conn, req_id, me["id"], need_text=need_text,
                 category=category if category in CATEGORIES else "other",
-                requirements=_requirements_from_form(budget, origin, destination,
-                                                     when, skills),
+                requirements=_requirements_from_form(
+                    budget, origin, destination, when, skills,
+                    salary_min, salary_max),
                 expires_at=expires, quantity_requested=qty)
             # Material edits re-trigger matching; no-op saves do not.
             after = need_engine.get_request(conn, req_id)
@@ -568,6 +611,7 @@ def request_extend(request: Request, req_id: int,
 
 @router.post("/matches/{match_id}/accept")
 def match_accept(request: Request, match_id: int,
+                 message: str = Form(""),
                  csrf_token: str = Form("")):
     me, redir = _me_or_login(request)
     if redir:
@@ -578,7 +622,8 @@ def match_accept(request: Request, match_id: int,
     conn = get_connection()
     try:
         try:
-            match = matcher.accept_match(conn, match_id, me["id"])
+            match = matcher.accept_match(conn, match_id, me["id"],
+                                         message=message or "")
         except matcher.MatcherError:
             raise HTTPException(status_code=404, detail="Match not found")
         search = need_engine.get_request(conn, match["search_request_id"])
@@ -643,13 +688,22 @@ def notification_read(request: Request, notif_id: str = Form(""),
     if redir:
         return redir
     auth.require_session_csrf(request, csrf_token, me["id"])
+    target = "/notifications"
     conn = get_connection()
     try:
         if notif_id.strip() == "all":
             mark_all_notifications_read(conn, me["id"])
         elif notif_id.strip().isdigit():
             mark_notification_read(conn, int(notif_id), me["id"])
+            # Reading one notification takes the user to what it is
+            # about (the match view with Accept/Reject), when the link
+            # is a safe same-site path.
+            for note in list_notifications(conn, me["id"]):
+                if note["id"] == int(notif_id) \
+                        and (note["link"] or "").startswith("/"):
+                    target = note["link"]
+                    break
         conn.commit()
     finally:
         conn.close()
-    return RedirectResponse(url="/notifications", status_code=303)
+    return RedirectResponse(url=target, status_code=303)

@@ -592,8 +592,8 @@ class TestSecurityHeaders(unittest.TestCase):
 
 class TestSchemaV12(SessionCase):
     def test_version_and_revoked_table(self):
-        # v14 adds twin_chats (Find Something history).
-        self.assertEqual(SCHEMA_VERSION, 14)
+        # v15 adds opportunities.expires_at + matches.accept_message.
+        self.assertEqual(SCHEMA_VERSION, 15)
         conn = self._conn()
         try:
             tables = {r["name"] for r in conn.execute(

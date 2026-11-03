@@ -43,11 +43,16 @@
       <p class="request-meta">
         <span class="badge">{{ m.status }}</span>
         <span class="badge">{{ m.counterpart_type }}</span>
+        {% if m.mutual %}<span class="badge">mutually accepted</span>{% endif %}
         <span>· sought by {{ m.search_twin }} ({{ m.search_owner }})</span>
       </p>
       <p class="lede">Their search: “{{ m.search_title }}” ({{ m.search_status }})</p>
       <p class="lede">{{ m.reason }}</p>
       <p class="lede">them: {% if m.owner_accepted %}accepted{% else %}undecided{% endif %} · me: {% if m.peer_accepted %}interested{% else %}undecided{% endif %}</p>
+      {% if m.accept_message %}<p class="lede">Their message: “{{ m.accept_message }}”</p>{% endif %}
+      {% if m.mutual and m.contact %}
+      <p class="lede">Contact: {% if m.contact.phone %}phone {{ m.contact.phone }}{% endif %}{% if m.contact.phone and m.contact.email %} · {% endif %}{% if m.contact.email %}email {{ m.contact.email }}{% endif %}</p>
+      {% endif %}
       {% if m.status == "potential" or (m.status == "accepted" and not m.peer_accepted) %}
       <form method="post" action="/matches/{{ m.id }}/accept" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
         <button class="button" type="submit">I'm interested</button>

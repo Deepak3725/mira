@@ -980,8 +980,8 @@ class TestMigrationV8(AIcase):
         ).fetchone()["version"]
         self.assertEqual(version, SCHEMA_VERSION)
         # Pinned deliberately: bump only with a real migration.
-        # v14 adds twin_chats (Find Something history).
-        self.assertEqual(SCHEMA_VERSION, 14)
+        # v15 adds opportunities.expires_at + matches.accept_message.
+        self.assertEqual(SCHEMA_VERSION, 15)
 
 
 class TestBackCompat(unittest.TestCase):

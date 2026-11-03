@@ -1,7 +1,7 @@
 """Universal Find Something flows (scenarios A-G).
 
 Engine-level behavior (post visibility, reverse discovery,
-bidirectional contact, voice posting) plus full-HTTP journeys for:
+bidirectional contact) plus full-HTTP journeys for:
 seeker-offer coordination (A), taxi coordination (B), arbitrary posts
 (C), fresh-user parity (D), empty states (E), knowledge import (F),
 and privacy/pause/withdrawal controls (G).
@@ -29,8 +29,6 @@ from app.db import (
 from app.matching import find_needs, find_providers
 from app.request_parse import parse_need
 from app.requests import RequestError
-from app.voice import commands
-from app.voice.session import handle_transcript, reset_sessions
 
 from tests.test_e2e_flows import E2ECase, _client, _hidden
 
@@ -245,78 +243,6 @@ class TestBidirectionalContact(FlowCase):
         conv = engine.get_conversation(self.conn, conv_id)
         self.assertEqual(conv["opportunity_id"], opp_id)
         self.assertEqual(conv["opp_title"], "Moving crew")
-
-
-class TestVoiceNeedPosting(FlowCase):
-    def setUp(self):
-        super().setUp()
-        reset_sessions()
-
-    def tearDown(self):
-        reset_sessions()
-        super().tearDown()
-
-    def test_post_and_looking_for_trigger_need(self):
-        cmd = commands.parse_command(
-            "Twin, post that I'm looking for a Java tutor.")
-        self.assertEqual(cmd["kind"], "need")
-        self.assertIn("Java tutor", cmd["slots"]["text"])
-        self.assertNotIn("post that", cmd["slots"]["text"].lower())
-        cmd = commands.parse_command("I'm looking for a taxi.")
-        self.assertEqual(cmd["kind"], "need")
-        cmd = commands.parse_command("I need a plumber.")
-        self.assertEqual(cmd["kind"], "need")
-
-    def test_voice_post_confirm_flow(self):
-        uid, tid = self._user("Pam")
-        first = handle_transcript(
-            self.conn, user_id=uid, twin_id=tid,
-            text="Twin, post that I'm looking for a Java tutor.",
-            provider="text")
-        self.assertIn("How long should I search", first["text"])
-        second = handle_transcript(
-            self.conn, user_id=uid, twin_id=tid, text="one week",
-            provider="text")
-        self.assertTrue(second["expect_confirmation"])
-        self.assertIn("Post this request", second["text"])
-        third = handle_transcript(
-            self.conn, user_id=uid, twin_id=tid, text="yes",
-            provider="text")
-        self.assertIn("Posted request", third["text"])
-        rows = list(self.conn.execute(
-            "SELECT * FROM requests WHERE owner_user_id = ?", (uid,)))
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["status"], "open")
-        self.assertIn("Java tutor", rows[0]["need_text"])
-        self.assertTrue(rows[0]["expires_at"])
-
-    def test_voice_stated_deadline_skips_question(self):
-        uid, tid = self._user("Quinn")
-        first = handle_transcript(
-            self.conn, user_id=uid, twin_id=tid,
-            text="Twin, post that I'm looking for a taxi,"
-            " deadline two hours.",
-            provider="text")
-        self.assertTrue(first["expect_confirmation"])
-        self.assertIn("Post this request", first["text"])
-
-    def test_voice_no_deadline_accepted(self):
-        uid, tid = self._user("Rita")
-        handle_transcript(
-            self.conn, user_id=uid, twin_id=tid,
-            text="Twin, post that I'm looking for a plumber.",
-            provider="text")
-        second = handle_transcript(
-            self.conn, user_id=uid, twin_id=tid, text="no deadline",
-            provider="text")
-        self.assertIn("Post this request", second["text"])
-        third = handle_transcript(
-            self.conn, user_id=uid, twin_id=tid, text="yes",
-            provider="text")
-        self.assertIn("Posted request", third["text"])
-        rows = list(self.conn.execute(
-            "SELECT * FROM requests WHERE owner_user_id = ?", (uid,)))
-        self.assertIsNone(rows[0]["expires_at"])
 
 
 class HTTPFlows(E2ECase):

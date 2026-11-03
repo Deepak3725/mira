@@ -7,8 +7,9 @@ invents values.
 
 Extracts (all optional):
   budget_max      -- "Nu. 500", "max 500", "under $50", "budget of 300"
-  origin          -- "from GCIT"
-  destination     -- "to Thimphu"
+  salary_min/max  -- "salary 20000-30000", "pays Nu. 25000"
+  origin          -- "from Thimphu" (capitalized or known Bhutan places)
+  destination     -- "to Paro"
   when            -- "tomorrow at 9 AM" (kept as raw text + best-effort ISO date)
   skills          -- "needs Python, SQL" / "with X experience"
   category_hint   -- taxi/ride, job/hire, service, supplier, collaborator
@@ -19,18 +20,43 @@ from __future__ import annotations
 import datetime as _dt
 import re
 
-# NOTE (hackathon compliance): no "job" hiring category. Employment
-# screening is prohibited, so hiring-speak parses as "other" and job
-# discovery happens seeker-side via opportunities, never as applicant
-# matching. Service/transport/supply/collaboration stay: coordination,
-# not employment screening.
-CATEGORIES = ("transport", "service", "supply", "collaboration", "other")
+# Jobs are a first-class category: seekers look for work and employers
+# look for people. Matching still scores both sides on fit (skills,
+# place, budget) and never ranks applicants for anyone else.
+CATEGORIES = ("transport", "job", "service", "supply", "collaboration",
+              "other")
 
 _CATEGORY_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("transport", ("taxi", "ride", "driver", "cab", "pickup", "drop", "airport", "flight")),
+    ("job", ("job", "hiring", "hire", "vacancy", "vacancies", "position",
+             "resume", "cv", "interview", "salary", "employee", "employer",
+             "full-time", "full time", "part-time", "part time", "internship")),
     ("service", ("plumber", "electrician", "repair", "clean", "cater", "photograph", "tutor")),
     ("supply", ("supplier", "supply", "wholesale", "units of", "order of", "vendor")),
     ("collaboration", ("collaborat", "partner", "cofounder", "co-founder", "team up")),
+)
+
+#: Known Bhutan places, matched case-insensitively as a fallback when
+#: the capitalized "from X"/"to Y" pattern misses ("taxi from thimphu
+#: to paro"). Multi-word names first so "Samdrup Jongkhar" wins over
+#: "Jongkhar".
+KNOWN_PLACES: tuple[str, ...] = (
+    "Samdrup Jongkhar", "Trashiyangtse", "Trongsa", "Trashigang",
+    "Phuentsholing", "Wangdue", "Bumthang", "Punakha", "Thimphu",
+    "Mongar", "Sarpang", "Paro", "Tsirang", "Dagana", "Zhemgang",
+    "Lhuentse", "Gelephu", "Jakar", "Haa", "Gasa", "Tashi Yangtse",
+    "Phuntsholing", "Bhutan", "Delhi", "Kolkata", "Bagdogra",
+)
+_PLACE_PATTERN = "|".join(
+    re.escape(place) for place in sorted(KNOWN_PLACES, key=len, reverse=True))
+_ROUTE_PAIR_RE = re.compile(
+    r"\b(" + _PLACE_PATTERN + r")\s+to\s+(" + _PLACE_PATTERN + r")\b",
+    re.IGNORECASE,
+)
+_TRAVEL_TO_RE = re.compile(
+    r"\b(?:(?:i|we)\s+(?:am|are)\s+)?"
+    r"(?:going|travelling|traveling|heading|headed|driving)\s+to\b",
+    re.IGNORECASE,
 )
 
 _BUDGET_RE = re.compile(
@@ -58,9 +84,45 @@ _SKILL_RE = re.compile(
     # Triggers are standalone words: "learning" inside the compound
     # "machine-learning" must not trigger ("Find a machine-learning
     # tutor" finds no deterministic skill so the model can fill it).
-    r"(?<![\w-])(?:needs?|requires?|requiring|with|skilled in|experience in|knows?|knowing"
+    r"(?<![\w-])(?:needs?|requires?|requiring|with|skilled in|experience in|experienced with|experienced in"
+    r"|proficient in|expert in|background in|familiar with|knows?|knowing"
     r"|learn(?:ing)?\b|looking for)\s+"
     r"([A-Za-z][\w+#.]*(?:\s*(?:,|and|&)\s*[A-Za-z][\w+#.]*)*)",
+    re.IGNORECASE,
+)
+
+#: Role phrases carry their own skill ("frontend developer" -> frontend,
+#: "React developer" -> React, bare "developer" -> developer). Modifiers
+#: that are seniority or filler ("senior", "good") are skipped so they
+#: never become skills.
+# NOTE: "driver" is deliberately not a role noun. Transport needs
+# match on routes, not skills, so "find an available driver" must not
+# produce a "driver"/"available" skill that would dilute tag scoring.
+_ROLE_RE = re.compile(
+    r"\b([A-Za-z][\w+#.-]*\s+)?(developers?|engineers?|designers?"
+    r"|programmers?|analysts?|managers?|accountants?|teachers?|tutors?"
+    r"|cooks?|chefs?|plumbers?|electricians?|carpenters?"
+    r"|mechanics?|photographers?|writers?|translators?|nurses?)\b",
+    re.IGNORECASE,
+)
+_ROLE_MODIFIER_STOP = {
+    "a", "an", "the", "my", "our", "good", "great", "best", "senior",
+    "junior", "experienced", "skilled", "professional", "local", "full",
+    "certified", "licensed", "reliable", "looking", "need", "want",
+    "available", "learning", "stack", "project", "product", "password",
+    "team", "office", "account",
+}
+
+_SALARY_RANGE_RE = re.compile(
+    r"(?:salary|pay|pays|paying|wage|wages|stipend)\b[^.\d]{0,24}"
+    r"(?:nu\.?|btn|rs\.?|\$)?\s*(\d[\d,]*)\s*(?:-|–|—|to)\s*"
+    r"(?:nu\.?|btn|rs\.?|\$)?\s*(\d[\d,]*)",
+    re.IGNORECASE,
+)
+_SALARY_SINGLE_RE = re.compile(
+    r"(?:salary|pay|pays|paying|wage|wages|stipend)\b[^.\d]{0,24}"
+    r"(?:of\s+|at\s+|around\s+|about\s+)?"
+    r"(?:nu\.?|btn|rs\.?|\$)?\s*(\d[\d,]*)",
     re.IGNORECASE,
 )
 _SKILL_STOP = {"a", "an", "the", "my", "me", "good", "great", "some", "experience",
@@ -124,7 +186,36 @@ def _parse_places(text: str) -> tuple[str | None, str | None, str]:
             destination = match.group(2).strip(" .")
         if match.group(3) and origin is None:
             origin = match.group(3).strip(" .")
+    if origin is None or destination is None:
+        gaz_origin, gaz_destination = _gazetteer_places(text or "")
+        if origin is None:
+            origin = gaz_origin
+        if destination is None:
+            destination = gaz_destination
+    route = _ROUTE_PAIR_RE.search(text or "")
+    if route:
+        if origin is None:
+            origin = route.group(1)
+        if destination is None:
+            destination = route.group(2)
     return origin, destination, text
+
+
+def _gazetteer_places(text: str) -> tuple[str | None, str | None]:
+    """Case-insensitive from/to fallback over known places.
+
+    Only fires on explicit "from <place>" / "to <place>" phrasing so a
+    bare mention ("jobs in Thimphu") never becomes a trip endpoint.
+    """
+    origin = destination = None
+    for place in KNOWN_PLACES:
+        if re.search(r"\bfrom\s+" + re.escape(place) + r"\b", text,
+                     re.IGNORECASE) and origin is None:
+            origin = place
+        if re.search(r"\bto\s+" + re.escape(place) + r"\b", text,
+                     re.IGNORECASE) and destination is None:
+            destination = place
+    return origin, destination
 
 
 def parse_places(text: str) -> tuple[str | None, str | None]:
@@ -179,7 +270,58 @@ def _parse_skills(text: str) -> list[str]:
                 continue
             if word not in found:
                 found.append(word)
+    for skill in _role_skills(text):
+        if skill not in found:
+            found.append(skill)
     return found[:10]
+
+
+def _role_skills(text: str) -> list[str]:
+    """Skills implied by role phrases ("frontend developer" -> frontend)."""
+    found: list[str] = []
+    for match in _ROLE_RE.finditer(text or ""):
+        modifier = (match.group(1) or "").strip()
+        role = (match.group(2) or "").strip()
+        if modifier and "-" in modifier:
+            # Hyphenated compounds stay model territory ("machine-learning
+            # tutor" yields no deterministic skill, same as _SKILL_RE).
+            continue
+        if modifier and modifier.lower() not in _ROLE_MODIFIER_STOP:
+            candidate = modifier
+        else:
+            candidate = role.lower()
+            if candidate.endswith("s") and len(candidate) > 4:
+                candidate = candidate[:-1]
+        candidate = candidate.strip().strip(".")
+        if candidate and len(candidate) <= 40 and candidate not in found:
+            found.append(candidate)
+    return found
+
+
+def _parse_salary(text: str) -> tuple[float | None, float | None]:
+    """Salary floor/ceiling ("salary 20000-30000", "pays Nu. 25000").
+
+    A single figure means a fixed offer/expectation, so it fills both
+    ends. Returns (min, max) with None for unstated ends.
+    """
+    match = _SALARY_RANGE_RE.search(text or "")
+    if match:
+        try:
+            low = float(match.group(1).replace(",", ""))
+            high = float(match.group(2).replace(",", ""))
+        except ValueError:
+            return None, None
+        if low > high:
+            low, high = high, low
+        return low, high
+    single = _SALARY_SINGLE_RE.search(text or "")
+    if single:
+        try:
+            value = float(single.group(1).replace(",", ""))
+        except ValueError:
+            return None, None
+        return value, value
+    return None, None
 
 
 def _parse_category(text: str) -> str:
@@ -187,6 +329,8 @@ def _parse_category(text: str) -> str:
     for category, words in _CATEGORY_WORDS:
         if any(w in low for w in words):
             return category
+    if _ROUTE_PAIR_RE.search(text or "") or _TRAVEL_TO_RE.search(text or ""):
+        return "transport"
     return "other"
 
 
@@ -235,11 +379,16 @@ def parse_need(text: str) -> dict:
     origin, destination, _ = _parse_places(text)
     when_raw, when_iso = _parse_when(text)
     skills = _parse_skills(text)
+    salary_min, salary_max = _parse_salary(text)
     category = _parse_category(text)
     requirements: dict = {}
     if budget is not None:
         requirements["budget_max"] = budget
         requirements["budget_currency"] = currency
+    if salary_min is not None:
+        requirements["salary_min"] = salary_min
+    if salary_max is not None:
+        requirements["salary_max"] = salary_max
     if origin:
         requirements["origin"] = origin
     if destination:

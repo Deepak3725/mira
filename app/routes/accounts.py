@@ -31,8 +31,13 @@ router = APIRouter(tags=["accounts"])
 
 ROLES = ("job_seeker", "employer", "professional", "independent")
 
+#: Twin roles: the account registration no longer asks; the twin owns it.
+TWIN_ROLES = ("job_seeker", "employer", "collaboration", "professional",
+              "independent", "other")
+
 SHAREABLE_FIELDS = (
     ("headline", "Headline"),
+    ("role", "Role"),
     ("skills", "Skills"),
     ("experience_years", "Experience"),
     ("location", "Location"),
@@ -85,7 +90,7 @@ def register_form(request: Request):
         return RedirectResponse(url="/me", status_code=303)
     return templates.TemplateResponse(
         request, "register.html",
-        {"app_name": settings.app_name, "me": None, "roles": ROLES, "error": "",
+        {"app_name": settings.app_name, "me": None, "error": "",
          "csrf_token": auth.csrf_token(None)},
     )
 
@@ -99,21 +104,23 @@ def register(
     role: str = Form("professional"),
     csrf_token: str = Form(""),
 ):
+    # The registration form no longer asks for a role (it belongs to the
+    # twin profile); the parameter stays so older clients/tests that
+    # still send it keep working.
     auth.require_csrf(csrf_token, None)
     if not auth.check_rate_limit(f"register:{_ip(request)}", 10, 3600):
-        return _form_error(request, "register.html", "Too many attempts. Try again later.",
-                           {"roles": ROLES})
+        return _form_error(request, "register.html", "Too many attempts. Try again later.")
     name, email = _clean(name, 60), _clean(email, 120).lower()
     if not name:
-        return _form_error(request, "register.html", "Please enter a name.", {"roles": ROLES})
+        return _form_error(request, "register.html", "Please enter a name.")
     if "@" not in email or "." not in email.split("@")[-1]:
-        return _form_error(request, "register.html", "Please enter a valid email.", {"roles": ROLES})
+        return _form_error(request, "register.html", "Please enter a valid email.")
     if len(password) < 8:
         return _form_error(request, "register.html",
-                           "Password must be at least 8 characters.", {"roles": ROLES})
+                           "Password must be at least 8 characters.")
     if len(password) > auth.MAX_PASSWORD_LENGTH:
         return _form_error(request, "register.html",
-                           "Password must be at most 128 characters.", {"roles": ROLES})
+                           "Password must be at most 128 characters.")
     if role not in ROLES:
         role = "professional"
     conn = get_connection()
@@ -283,10 +290,15 @@ def _twin_form_context(twin=None) -> dict:
     if not isinstance(conditions, dict):
         conditions = {}
     get = lambda k, d="": profile.get(k, d)  # noqa: E731
+    twin_role = get("role", "")
+    if twin_role not in TWIN_ROLES:
+        twin_role = ""
     return {
         "display_name": twin["display_name"] if twin else "",
         "persona": twin["persona"] if twin else "",
         "tone": twin["tone"] if twin else "",
+        "twin_role": twin_role,
+        "twin_roles": TWIN_ROLES,
         "is_public": bool(twin["is_public"]) if twin else False,
         "cond_max_price": conditions.get("max_price", ""),
         "cond_auto_answer": conditions.get("auto_answer", True),
@@ -307,6 +319,89 @@ def _twin_form_context(twin=None) -> dict:
         "authorized": authorized,
         "fields": SHAREABLE_FIELDS,
     }
+
+
+def _setup_page(request: Request, me: dict, state: dict, reply: str = ""):
+    import json
+    return templates.TemplateResponse(
+        request, "twin_setup.html",
+        {"app_name": settings.app_name, "me": me, "state": json.dumps(state),
+         "phase": state.get("phase", "collect"), "reply": reply,
+         "csrf_token": auth.csrf_for_request(request, me["id"])})
+
+
+@router.get("/twin/setup", response_class=HTMLResponse)
+def twin_setup_page(request: Request):
+    me = current_user(request)
+    if me is None:
+        return RedirectResponse(url="/login", status_code=303)
+    conn = get_connection()
+    try:
+        if get_twin_by_user(conn, me["id"]) is not None:
+            return RedirectResponse(url="/twin/edit", status_code=303)
+    finally:
+        conn.close()
+    from ..twin_setup import new_setup, current_question
+    state = new_setup()
+    return _setup_page(request, me, state, current_question(state))
+
+
+@router.post("/twin/setup", response_class=HTMLResponse)
+def twin_setup_turn(request: Request, state: str = Form("{}"),
+                    message: str = Form(""), csrf_token: str = Form("")):
+    import json
+    from .. import twin_setup
+    me = current_user(request)
+    if me is None:
+        return RedirectResponse(url="/login", status_code=303)
+    auth.require_session_csrf(request, csrf_token, me["id"])
+    conn = get_connection()
+    try:
+        if get_twin_by_user(conn, me["id"]) is not None:
+            return RedirectResponse(url="/twin/edit", status_code=303)
+    finally:
+        conn.close()
+    try:
+        draft = json.loads(state)
+        if not isinstance(draft, dict) or not isinstance(draft.get("answers"), dict):
+            raise ValueError
+    except (ValueError, TypeError):
+        draft = twin_setup.new_setup()
+    command = (message or "").strip()
+    if draft.get("phase") == "review" and command.lower() in (
+            "continue to profile form", "continue", "open form"):
+        answers = draft.get("answers", {})
+        form = _twin_form_context()
+        form.update({"display_name": answers.get("display_name", ""),
+                     "headline": answers.get("headline", ""),
+                     "twin_role": answers.get("role", "") if answers.get("role") in TWIN_ROLES else "",
+                     "skills": ", ".join(answers.get("skills", [])),
+                     "experience_years": answers.get("experience_years", ""),
+                     "location": answers.get("location", ""),
+                     "availability": answers.get("availability", ""),
+                     "interests": ", ".join(answers.get("interests", [])),
+                     "bio": answers.get("bio", ""),
+                     "tone": answers.get("tone", "friendly")})
+        return templates.TemplateResponse(
+            request, "twin_form.html",
+            {"app_name": settings.app_name, "me": me, "mode": "new",
+             "form": form, "error": "",
+             "notice": "Review these answers, then submit the form to create your private twin.",
+             "csrf_token": auth.csrf_for_request(request, me["id"])})
+    field = twin_setup.current_field(draft)
+    if field == "role" and command.lower() not in ("skip", "skip it", "pass", "next", "none", "nothing", "n/a") and command.lower().replace(" ", "_") not in TWIN_ROLES:
+        return _setup_page(request, me, draft, "Choose one listed role or say skip.")
+    if field == "experience_years" and command.lower() not in ("skip", "skip it", "pass", "next", "none", "nothing", "n/a"):
+        try:
+            years = int(command)
+            if not 0 <= years <= 80:
+                raise ValueError
+        except ValueError:
+            return _setup_page(request, me, draft, "Enter a whole number from 0 to 80, or say skip.")
+    result = twin_setup.setup_turn(draft, command)
+    if result.get("cancelled"):
+        return RedirectResponse(url="/twin/new", status_code=303)
+    return _setup_page(request, me, draft, result.get("reply", ""))
 
 
 @router.get("/twin/new", response_class=HTMLResponse)
@@ -356,6 +451,7 @@ def _profile_from_form(
     availability: str, portfolio_url: str, bio: str, company: str,
     role_hiring: str, requirements: str, phone: str, personal_email: str,
     open_to_remote: str | None, interests: str = "",
+    twin_role: str = "",
 ) -> dict:
     def csv(value: object) -> list[str]:
         # Direct unit calls may leave a Form default in place of a
@@ -368,8 +464,14 @@ def _profile_from_form(
         years = max(0, min(80, int(experience_years.strip()))) if experience_years.strip() else None
     except ValueError:
         years = None
+    # Direct (non-HTTP) callers may leave the Form sentinel in place.
+    role = twin_role if isinstance(twin_role, str) else ""
+    role = role.strip().lower()
+    if role not in TWIN_ROLES:
+        role = ""
     return {
-        "headline": _clean(headline, 200), "skills": csv(skills),
+        "headline": _clean(headline, 200), "role": role,
+        "skills": csv(skills),
         "experience_years": years, "location": _clean(location, 120),
         "open_to_remote": bool(open_to_remote),
         "availability": _clean(availability, 200),
@@ -389,7 +491,7 @@ def twin_create(
     location: str = Form(""), availability: str = Form(""), portfolio_url: str = Form(""),
     bio: str = Form(""), company: str = Form(""), role_hiring: str = Form(""),
     requirements: str = Form(""), phone: str = Form(""), personal_email: str = Form(""),
-    interests: str = Form(""),
+    interests: str = Form(""), twin_role: str = Form(""),
     open_to_remote: str | None = Form(None), authorized: list[str] = Form([]),
     public_listing: str | None = Form(None),
     cond_max_price: str = Form(""), cond_auto_answer: str | None = Form(None),
@@ -410,7 +512,7 @@ def twin_create(
     profile = _profile_from_form(headline, skills, experience_years, location,
                                  availability, portfolio_url, bio, company,
                                  role_hiring, requirements, phone, personal_email,
-                                 open_to_remote, interests)
+                                 open_to_remote, interests, twin_role)
     conn = get_connection()
     try:
         if get_twin_by_user(conn, me["id"]) is not None:
@@ -444,7 +546,7 @@ def twin_update(
     location: str = Form(""), availability: str = Form(""), portfolio_url: str = Form(""),
     bio: str = Form(""), company: str = Form(""), role_hiring: str = Form(""),
     requirements: str = Form(""), phone: str = Form(""), personal_email: str = Form(""),
-    interests: str = Form(""),
+    interests: str = Form(""), twin_role: str = Form(""),
     open_to_remote: str | None = Form(None), authorized: list[str] = Form([]),
     public_listing: str | None = Form(None),
     cond_max_price: str = Form(""), cond_auto_answer: str | None = Form(None),
@@ -474,7 +576,7 @@ def twin_update(
         profile = _profile_from_form(headline, skills, experience_years, location,
                                      availability, portfolio_url, bio, company,
                                      role_hiring, requirements, phone, personal_email,
-                                     open_to_remote, interests)
+                                     open_to_remote, interests, twin_role)
         update_twin(conn, twin["id"], display_name=display_name,
                     persona=_clean(persona, 600), tone=_clean(tone, 120) or "friendly",
                     profile=profile, authorized_fields=allowed,

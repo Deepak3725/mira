@@ -10,13 +10,6 @@
   <label>Name <input type="text" name="name" required maxlength="60" autocomplete="name" /></label>
   <label>Email <input type="email" name="email" required maxlength="120" autocomplete="email" /></label>
   <label>Password (8+ characters) <input type="password" name="password" required minlength="8" autocomplete="new-password" /></label>
-  <label>I am a…
-    <select name="role">
-      {% for role in roles %}
-      <option value="{{ role }}">{{ role | replace("_", " ") | title }}</option>
-      {% endfor %}
-    </select>
-  </label>
   <button class="button" type="submit">Create account</button>
   <p class="lede">Already have one? <a href="/login">Log in</a>.</p>
 </form>

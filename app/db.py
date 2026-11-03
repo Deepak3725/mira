@@ -15,8 +15,11 @@ channel_events). Version 12 adds revoked_sessions so logout
 really invalidates sessions. Version 13 adds persistent search
 (``requests.expires_at`` / ``requests.quantity_requested``) plus the
 ``matches``, ``notifications``, and ``match_queue`` tables for
-event-driven matching. All helpers accept an optional
-``path`` so tests can use a temporary database file.
+event-driven matching. Version 14 is the pre-refinement baseline.
+Version 15 adds ``opportunities.expires_at`` (offer search duration)
+and ``matches.accept_message`` (poster-to-peer note on acceptance).
+All helpers accept an optional ``path`` so tests can use a
+temporary database file.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ from typing import Any
 from . import schema as app_schema
 from .config import settings
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 #: Columns added after the initial schema. Every entry's DDL must be
@@ -52,6 +55,8 @@ _ENSURE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("memories", "source_time", "TEXT"),
     ("requests", "expires_at", "TEXT"),
     ("requests", "quantity_requested", "INTEGER NOT NULL DEFAULT 1"),
+    ("opportunities", "expires_at", "TEXT"),
+    ("matches", "accept_message", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -454,6 +459,59 @@ def delete_twin(conn: Connection, twin_id: int) -> None:
     conn.execute("DELETE FROM twins WHERE id = ?", (twin_id,))
 
 
+def twin_profile(twin: Row) -> dict[str, Any]:
+    """Parse a twin row's profile_json ({} when missing/corrupt)."""
+    try:
+        profile = json.loads(twin["profile_json"] or "{}")
+    except (ValueError, TypeError):
+        return {}
+    return profile if isinstance(profile, dict) else {}
+
+
+def normalize_skill_list(skills: Any, limit: int = 30) -> list[str]:
+    """Clean skill strings; drop empties and case/whitespace duplicates.
+
+    First-seen display form wins ("react" then "React" keeps "react").
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    items = skills if isinstance(skills, list) else []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        clean = " ".join(item.split())[:120]
+        if not clean or clean.lower() in seen:
+            continue
+        seen.add(clean.lower())
+        out.append(clean)
+        if len(out) >= max(1, limit):
+            break
+    return out
+
+
+def add_twin_skills(conn: Connection, twin_id: int,
+                    new_skills: list[str]) -> list[str]:
+    """Union personal skills into the twin profile (single source of truth).
+
+    Existing skills are preserved; duplicates (ignoring case and extra
+    whitespace) are not added. Returns the full stored skill list.
+    Callers decide WHOSE skills these are: only the twin owner's own
+    personal skills belong here — never job requirements from an
+    employer post, which live on the opportunity/request instead.
+    """
+    row = conn.execute(
+        "SELECT profile_json FROM twins WHERE id = ?", (twin_id,)).fetchone()
+    if row is None:
+        return []
+    profile = twin_profile(row)
+    merged = normalize_skill_list(
+        list(profile.get("skills", []) or []) + list(new_skills or []))
+    profile["skills"] = merged
+    conn.execute("UPDATE twins SET profile_json = ? WHERE id = ?",
+                 (json.dumps(profile), twin_id))
+    return merged
+
+
 def get_twin_by_user(conn: Connection, user_id: int) -> Row | None:
     return conn.execute(
         "SELECT twins.*, users.name AS owner_name, users.role AS owner_role,"
@@ -508,13 +566,14 @@ def create_opportunity(
     status: str = "open",
     category: str = "",
     attributes: dict | None = None,
+    expires_at: str | None = None,
 ) -> int:
     return insert_returning_id(
         conn,
         "INSERT INTO opportunities (owner_user_id, kind, title, description,"
         " required_skills_json, preferred_experience_years, location,"
-        " remote_ok, status, category, attributes_json)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " remote_ok, status, category, attributes_json, expires_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             owner_user_id,
             kind,
@@ -527,6 +586,7 @@ def create_opportunity(
             status,
             category,
             json.dumps(attributes or {}),
+            expires_at,
         ),
     )
 
@@ -570,7 +630,8 @@ def list_opportunities(
 def update_opportunity(conn: Connection, opp_id: int, **fields) -> None:
     """Update an offer. Callers enforce ownership. Allowed keys: title,
     description, required_skills (list), preferred_experience_years,
-    location, remote_ok, status, category, attributes (dict)."""
+    location, remote_ok, status, category, attributes (dict),
+    expires_at (UTC stamp or None)."""
     if "required_skills" in fields:
         fields["required_skills_json"] = json.dumps(
             fields.pop("required_skills") or [])
@@ -579,7 +640,7 @@ def update_opportunity(conn: Connection, opp_id: int, **fields) -> None:
                                                or {})
     allowed = {"title", "description", "required_skills_json",
                "preferred_experience_years", "location", "remote_ok",
-               "status", "category", "attributes_json"}
+               "status", "category", "attributes_json", "expires_at"}
     sets = [f"{key} = ?" for key in fields if key in allowed]
     if not sets:
         return
@@ -723,7 +784,7 @@ def create_match(conn: Connection, *, search_request_id: int,
 
 def update_match(conn: Connection, match_id: int, **fields) -> None:
     allowed = {"status", "owner_accepted", "peer_accepted", "score",
-               "reason"}
+               "reason", "accept_message"}
     sets = [f"{key} = ?" for key in fields if key in allowed]
     if not sets:
         return

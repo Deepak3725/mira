@@ -56,6 +56,8 @@
   <label>To <input type="text" name="destination" maxlength="120" value="{{ current.destination or '' }}" /></label>
   <label>When <input type="text" name="when" maxlength="120" value="{{ current.when_text or '' }}" placeholder="e.g. tomorrow at 9 AM" /></label>
   <label>Skills / tags (comma-separated) <input type="text" name="skills" value="{{ (current.skills or []) | join(', ') }}" /></label>
+  <label>Salary min (Nu., optional) <input type="text" name="salary_min" value="{{ current.salary_min or '' }}" /></label>
+  <label>Salary max (Nu., optional) <input type="text" name="salary_max" value="{{ current.salary_max or '' }}" /></label>
   {% if req.expires_at %}<p class="form-note">Parsed deadline: {{ req.expires_at }} UTC — pick a duration to change it, or “No deadline” to keep it.</p>{% endif %}
   <label>How long should your twin search?
     <select name="duration">

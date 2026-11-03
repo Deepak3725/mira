@@ -6,15 +6,33 @@
   <p class="lede">Talk to {{ twin_name }} in words. Your twin searches and tells you what it finds.</p>
 </section>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+{% if notice %}<p class="form-note" role="status">{{ notice }}</p>{% endif %}
+<section class="skills-bar" aria-label="Your skills">
+  {% if twin_skills %}
+  <ul class="skill-chips">
+    {% for skill in twin_skills %}
+    <li>{{ skill }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="lede">You haven't shared your skills with me yet.</p>
+  {% endif %}
+  <form class="note-form" method="post" action="/find/skills"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Add skills
+      <input type="text" name="skills" maxlength="500" placeholder="e.g. Python, SQL" />
+    </label>
+    <button class="button secondary" type="submit">Save skills</button>
+  </form>
+</section>
 <section class="chat-thread" id="chat-thread" aria-label="Conversation with your twin" aria-live="polite">
   {% if not messages %}
   <div class="empty-state">
     <h2>No messages yet</h2>
     <p>Describe what you need. For example:</p>
     <ul class="example-prompts">
-      <li><button type="button" class="chip" data-fill="I'm looking for a full-stack developer job in Bhutan.">a full-stack developer job in Bhutan</button></li>
-      <li><button type="button" class="chip" data-fill="I need a taxi from Thimphu to Dagana tomorrow. I need four seats.">a taxi from Thimphu to Dagana</button></li>
-      <li><button type="button" class="chip" data-fill="I want to find a piano teacher who can teach beginners on weekends.">a weekend piano teacher</button></li>
+      <li><button type="button" class="chip" data-fill="Find jobs that match my skills.">Jobs</button></li>
+      <li><button type="button" class="chip" data-fill="I need a taxi from Thimphu to Paro tomorrow.">Taxi</button></li>
+      <li><button type="button" class="chip" data-fill="I am looking for something else.">Others</button></li>
     </ul>
   </div>
   {% endif %}
@@ -46,6 +64,7 @@
   <textarea name="message" id="find-message" rows="2" maxlength="2000" required placeholder="Describe what you're looking for…" autofocus>{{ draft }}</textarea>
   <button class="button" type="submit" id="find-send">Send</button>
 </form>
+<p class="form-note">You can also say “set my headline to …”, “teach my twin that …”, or “undo update”. Profile edits ask before saving; taught facts go to memory review.</p>
 <p class="form-note">Enter sends · Shift+Enter adds a line</p>
 <script>
 (function () {

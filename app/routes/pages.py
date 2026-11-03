@@ -13,7 +13,7 @@ from .. import auth
 from .. import conversations as engine
 from .. import matcher
 from .. import requests as need_engine
-from ..avatars import STATES, avatar_svg
+from ..avatars import avatar_svg
 from ..config import settings
 from ..db import (
     create_opportunity,
@@ -21,7 +21,6 @@ from ..db import (
     get_opportunity,
     get_twin_by_user,
     update_opportunity,
-    visible_twins,
 )
 from ..request_parse import CATEGORIES as REQUEST_CATEGORIES
 from ..matching import SeekerProfile, find_matches, find_needs, score_opportunity
@@ -133,53 +132,26 @@ def dashboard(request: Request) -> HTMLResponse:
     viewer = current_user_id(request)
     conn = get_connection()
     try:
-        rows = visible_twins(conn, viewer)
-        twins = [
-            {
-                "display_name": row["display_name"],
-                "owner_name": row["owner_name"],
-                "owner_role": row["owner_role"],
-                "persona": row["persona"],
-                "tone": row["tone"],
-                "avatar_svg": avatar_svg(row["avatar_seed"]),
-                "public": twin_public_view(row),
-            }
-            for row in rows
-        ]
-        # NOTE (hackathon compliance): relevance spotlights cover the
-        # viewer's OWN twin only. Other twins are listed with their
-        # public fields, never scored.
-        spotlights = []
         own = get_twin_by_user(conn, viewer) if viewer else None
+        own_view = None
         if own is not None:
-            top = find_matches(conn, own, limit=2)
-            for item in top:
-                item["owner_svg"] = _owner_svg(
-                    item["owner"]["twin_avatar_seed"])
-            spotlights.append(
-                {
-                    "twin_id": own["id"],
-                    "display_name": own["display_name"],
-                    "owner_name": "",
-                    "matches": top,
-                }
-            )
+            public = twin_public_view(own)
+            own_view = {
+                "display_name": own["display_name"],
+                "persona": own["persona"],
+                "tone": own["tone"],
+                "avatar_svg": avatar_svg(own["avatar_seed"]),
+                "public": public,
+            }
     finally:
         conn.close()
-    mood_seed = rows[0]["avatar_seed"] if rows else "mira-demo"
-    moods = [{"state": s, "svg": avatar_svg(mood_seed, s)} for s in STATES]
     return templates.TemplateResponse(
         request,
         "dashboard.html",
         {
             "app_name": settings.app_name,
             "me": current_user(request),
-            "twins": twins,
-            "moods": moods,
-            "spotlights": spotlights,
-            "own": (
-                {"display_name": own["display_name"]}
-                if own is not None else None),
+            "own": own_view,
         },
     )
 
@@ -375,7 +347,9 @@ def opportunity_edit(
     title: str = Form(""), description: str = Form(""),
     skills: str = Form(""), years: str = Form(""),
     location: str = Form(""), remote_ok: str = Form(""),
-    category: str = Form(""), csrf_token: str = Form(""),
+    category: str = Form(""), duration: str = Form("keep"),
+    salary_min: str = Form(""), salary_max: str = Form(""),
+    csrf_token: str = Form(""),
 ):
     from .accounts import current_user
 
@@ -399,16 +373,46 @@ def opportunity_edit(
             wanted_years = int(years.strip()) if years.strip() else None
         except ValueError:
             wanted_years = None
-        update_opportunity(
-            conn, opp_id, title=(title or "").strip()[:200] or opp["title"],
-            description=(description or "")[:4000],
-            required_skills=[s.strip()[:60] for s in skills.split(",")
-                             if s.strip()][:20],
-            preferred_experience_years=wanted_years,
-            location=(location or "").strip()[:120],
-            remote_ok=remote_ok.strip().lower() in ("yes", "on", "true",
-                                                    "1"),
-            category=clean_category)
+        try:
+            attributes = json.loads(opp["attributes_json"] or "{}")
+        except (ValueError, TypeError):
+            attributes = {}
+        if not isinstance(attributes, dict):
+            attributes = {}
+        for key, raw in (("salary_min", salary_min),
+                         ("salary_max", salary_max)):
+            raw = raw if isinstance(raw, str) else ""
+            raw = raw.strip().replace(",", "")
+            if not raw:
+                attributes.pop(key, None)
+                continue
+            try:
+                value = float(raw)
+            except ValueError:
+                continue
+            if value >= 0:
+                attributes[key] = value
+        fields: dict = {
+            "title": (title or "").strip()[:200] or opp["title"],
+            "description": (description or "")[:4000],
+            "required_skills": [s.strip()[:60] for s in skills.split(",")
+                                if s.strip()][:20],
+            "preferred_experience_years": wanted_years,
+            "location": (location or "").strip()[:120],
+            "remote_ok": remote_ok.strip().lower() in ("yes", "on", "true",
+                                                       "1"),
+            "category": clean_category,
+            "attributes": attributes,
+        }
+        picked = duration if isinstance(duration, str) else "keep"
+        picked = picked.strip()
+        if picked == "none":
+            fields["expires_at"] = None
+        elif matcher.duration_minutes(picked, default=0):
+            fields["expires_at"] = matcher.plus_minutes(
+                matcher.now_stamp(),
+                matcher.duration_minutes(picked))
+        update_opportunity(conn, opp_id, **fields)
         conn.commit()
         after = get_opportunity(conn, opp_id)
         if after is not None and _opp_signature(after) != before:
@@ -453,7 +457,9 @@ def opportunity_reopen(request: Request, opp_id: int,
         opp = get_opportunity(conn, opp_id)
         if opp is None or opp["owner_user_id"] != me["id"]:
             raise HTTPException(status_code=404, detail="Not found")
-        update_opportunity(conn, opp_id, status="open")
+        # Reopening clears any elapsed search duration; the owner can set
+        # a fresh one from the edit form.
+        update_opportunity(conn, opp_id, status="open", expires_at=None)
         conn.commit()
         _trigger_offer_matching(conn, opp_id)
     finally:
@@ -463,7 +469,8 @@ def opportunity_reopen(request: Request, opp_id: int,
 
 @router.get("/opportunities/{opp_id}", response_class=HTMLResponse)
 def opportunity_detail(
-    request: Request, opp_id: int, twin_id: int | None = None
+    request: Request, opp_id: int, twin_id: int | None = None,
+    notice: str = "",
 ) -> HTMLResponse:
     conn = get_connection()
     try:
@@ -495,6 +502,16 @@ def opportunity_detail(
                 remote_ok=bool(opp["remote_ok"]),
             )
             selected = {"id": twin["id"], "display_name": twin["display_name"]}
+        try:
+            attributes = json.loads(opp["attributes_json"] or "{}")
+        except (ValueError, TypeError):
+            attributes = {}
+        if not isinstance(attributes, dict):
+            attributes = {}
+        try:
+            expires_at = opp["expires_at"]
+        except (KeyError, IndexError):
+            expires_at = None
         view = {
             "id": opp["id"],
             "kind": opp["kind"],
@@ -505,6 +522,9 @@ def opportunity_detail(
             "location": opp["location"],
             "remote_ok": bool(opp["remote_ok"]),
             "status": opp["status"],
+            "expires_at": expires_at,
+            "salary_min": attributes.get("salary_min", ""),
+            "salary_max": attributes.get("salary_max", ""),
         }
         owner = {
             "name": opp["owner_name"],
@@ -543,6 +563,8 @@ def opportunity_detail(
             "is_owner": bool(me and me["id"] == opp["owner_user_id"]),
             "categories": REQUEST_CATEGORIES,
             "opp_category": opp["category"] or "",
+            "durations": matcher.SEARCH_DURATIONS,
+            "notice": notice,
             "skills_text": ", ".join(
                 s for s in json.loads(opp["required_skills_json"] or "[]")
                 if isinstance(s, str)),

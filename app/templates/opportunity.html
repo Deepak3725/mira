@@ -3,10 +3,12 @@
 {% block content %}
 <section class="page-head narrow">
   <p class="back"><a href="/discover{% if selected %}?twin_id={{ selected.id }}{% endif %}">&larr; Back to discovery</a></p>
+  {% if notice %}<p class="form-note" role="status">{{ notice }}</p>{% endif %}
   <h1>{{ opp.title }}</h1>
   <p class="opp-meta">
     <span class="badge">{{ opp.kind }}</span>
     <span class="badge {% if opp.status != 'open' %}closed{% endif %}">{{ opp.status }}</span>
+    {% if opp.expires_at %}<span>· search until {{ opp.expires_at }} UTC</span>{% endif %}
     {% if match %}
     <span class="score" title="Rough fit indicator, not a success prediction">Match {{ match.score }}/100 for {{ selected.display_name }}</span>
     {% endif %}
@@ -29,6 +31,10 @@
       <dd>{{ opp.location or "Not specified" }}{% if opp.remote_ok %} (remote OK){% endif %}</dd>
       <dt>Experience</dt>
       <dd>{% if opp.preferred_experience_years %}{{ opp.preferred_experience_years }}+ years preferred{% else %}No preference{% endif %}</dd>
+      {% if opp.salary_min != "" or opp.salary_max != "" %}
+      <dt>Salary (Nu.)</dt>
+      <dd>{% if opp.salary_min != "" and opp.salary_max != "" and opp.salary_min != opp.salary_max %}{{ opp.salary_min }} – {{ opp.salary_max }}{% elif opp.salary_max != "" %}{{ opp.salary_max }}{% else %}{{ opp.salary_min }}{% endif %}</dd>
+      {% endif %}
     </dl>
     {% if match %}
     <h2>Why this matches</h2>
@@ -85,6 +91,21 @@
         <option value="">—</option>
         {% for c in categories %}
         <option value="{{ c }}"{% if c == opp_category %} selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Salary min (Nu., optional)
+      <input type="text" name="salary_min" value="{{ opp.salary_min }}" />
+    </label>
+    <label>Salary max (Nu., optional)
+      <input type="text" name="salary_max" value="{{ opp.salary_max }}" />
+    </label>
+    <label>Search duration
+      <select name="duration">
+        <option value="keep" selected>Keep{% if opp.expires_at %} (until {{ opp.expires_at }} UTC){% endif %}</option>
+        <option value="none">No deadline</option>
+        {% for name, minutes in durations %}
+        {% if name != "none" %}<option value="{{ name }}">Search {{ name }}</option>{% endif %}
         {% endfor %}
       </select>
     </label>

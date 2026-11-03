@@ -3,6 +3,7 @@
 {% block content %}
 <section class="page-head narrow">
   <p class="back"><a href="/requests">&larr; Requests</a></p>
+  {% if notice %}<p class="form-note" role="status">{{ notice }}</p>{% endif %}
   <h1>{{ req.title }}</h1>
   <p class="lede">{{ req.twin_name }} is on it</p>
   <p class="opp-meta">
@@ -20,54 +21,48 @@
   </ul>
   {% endif %}
 </section>
-{% if req.status != "closed" %}
+{% if matches %}
 <section>
-  <h2>Edit this post</h2>
-  <form class="auth-form" method="post" action="/requests/{{ req.id }}/update"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <label>Need text
-      <textarea name="need_text" rows="3" maxlength="2000" required>{{ req.need_text }}</textarea>
-    </label>
-    <label>Category
-      <select name="category">
-        {% for c in categories %}
-        <option value="{{ c }}"{% if c == req.category %} selected{% endif %}>{{ c }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Budget max (Nu.)
-      <input type="text" name="budget" value="{{ req.budget }}" />
-    </label>
-    <label>Origin
-      <input type="text" name="origin" value="{{ req.origin }}" maxlength="120" />
-    </label>
-    <label>Destination
-      <input type="text" name="destination" value="{{ req.destination }}" maxlength="120" />
-    </label>
-    <label>When
-      <input type="text" name="when" value="{{ req.when }}" maxlength="120" />
-    </label>
-    <label>Skills (comma-separated)
-      <input type="text" name="skills" value="{{ req.skills }}" />
-    </label>
-    <label>Deadline
-      <select name="duration">
-        <option value="keep" selected>Keep{% if req.expires_at %} (until {{ req.expires_at }} UTC){% endif %}</option>
-        <option value="none">No deadline</option>
-        {% for name, minutes in durations %}
-        {% if name != "none" %}<option value="{{ name }}">Search {{ name }}</option>{% endif %}
-        {% endfor %}
-      </select>
-    </label>
-    <label>How many matches do you need?
-      <input type="number" name="quantity" min="1" max="100" value="{{ req.fulfillment.requested }}" />
-    </label>
-    <button class="button secondary" type="submit">Save changes</button>
-  </form>
+  <h2>Matches for this search</h2>
+  <p class="lede">Contact details unlock only after both sides accept.</p>
+  <ul class="request-list">
+    {% for m in matches %}
+    <li class="request-card">
+      <h2>{% if m.peer_link %}<a href="{{ m.peer_link }}">{{ m.counter_title }}</a>{% else %}{{ m.counter_title }}{% endif %}</h2>
+      <p class="request-meta">
+        <span class="badge">{{ m.status }}</span>
+        <span class="badge">{{ m.counterpart_type }}</span>
+        {% if m.mutual %}<span class="badge">mutually accepted</span>{% endif %}
+        <span>· {{ m.peer_twin }} ({{ m.peer_name }})</span>
+      </p>
+      <p class="lede">{{ m.reason }}</p>
+      <p class="lede">me: {% if m.owner_accepted %}accepted{% else %}undecided{% endif %} · them: {% if m.peer_accepted %}interested{% else %}undecided{% endif %}</p>
+      {% if m.accept_message %}<p class="lede">Their message: “{{ m.accept_message }}”</p>{% endif %}
+      {% if m.mutual and m.contact %}
+      <p class="lede">Contact: {% if m.contact.phone %}phone {{ m.contact.phone }}{% endif %}{% if m.contact.phone and m.contact.email %} · {% endif %}{% if m.contact.email %}email {{ m.contact.email }}{% endif %}</p>
+      {% endif %}
+      {% if m.status == "potential" %}
+      <form method="post" action="/matches/{{ m.id }}/accept" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <label>Message (optional) <input type="text" name="message" maxlength="500" placeholder="e.g. interview time, pickup point" /></label>
+        <button class="button" type="submit">Accept</button>
+      </form>
+      <form method="post" action="/matches/{{ m.id }}/reject" style="display:inline" onsubmit="return confirm('Decline this match?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button class="button secondary" type="submit">Decline</button>
+      </form>
+      {% elif m.status == "accepted" and not m.owner_accepted %}
+      <form method="post" action="/matches/{{ m.id }}/accept" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <label>Message (optional) <input type="text" name="message" maxlength="500" placeholder="e.g. interview time, pickup point" /></label>
+        <button class="button" type="submit">Accept</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
 </section>
 {% endif %}
 <section>
   <h2>Available providers</h2>
-  <p class="lede">Providers whose offerings fit your requirements, with the matching facts shown. No scores, no verdicts — you review and decide. Your budget ceiling is never shared with providers.</p>
+  <p class="lede">Offerings that fit your requirements. Your budget ceiling is never shared with providers.</p>
   {% if providers %}
   <div class="opp-list">
     {% for item in providers %}
@@ -97,38 +92,6 @@
   </div>
   {% endif %}
 </section>
-{% if matches %}
-<section>
-  <h2>Matches for this search</h2>
-  <p class="lede">Potential matches need your decision — accepting starts twin coordination; nothing commits you. Rejected pairs never match again.</p>
-  <ul class="request-list">
-    {% for m in matches %}
-    <li class="request-card">
-      <h2>{% if m.peer_link %}<a href="{{ m.peer_link }}">{{ m.counter_title }}</a>{% else %}{{ m.counter_title }}{% endif %}</h2>
-      <p class="request-meta">
-        <span class="badge">{{ m.status }}</span>
-        <span class="badge">{{ m.counterpart_type }}</span>
-        <span>· {{ m.peer_twin }} ({{ m.peer_name }})</span>
-      </p>
-      <p class="lede">{{ m.reason }}</p>
-      <p class="lede">me: {% if m.owner_accepted %}accepted{% else %}undecided{% endif %} · them: {% if m.peer_accepted %}interested{% else %}undecided{% endif %}</p>
-      {% if m.status == "potential" %}
-      <form method="post" action="/matches/{{ m.id }}/accept" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <button class="button" type="submit">Accept</button>
-      </form>
-      <form method="post" action="/matches/{{ m.id }}/reject" style="display:inline" onsubmit="return confirm('Decline this match?');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <button class="button secondary" type="submit">Decline</button>
-      </form>
-      {% elif m.status == "accepted" and not m.owner_accepted %}
-      <form method="post" action="/matches/{{ m.id }}/accept" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <button class="button" type="submit">Accept</button>
-      </form>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-</section>
-{% endif %}
 {% if chats %}
 <section>
   <h2>Chats for this request</h2>
@@ -141,6 +104,57 @@
     {% endfor %}
   </ul>
 </section>
+{% endif %}
+{% if req.status != "closed" %}
+<details>
+  <summary>Edit this post</summary>
+  <form class="auth-form" method="post" action="/requests/{{ req.id }}/update"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>Need text
+      <textarea name="need_text" rows="3" maxlength="2000" required>{{ req.need_text }}</textarea>
+    </label>
+    <label>Category
+      <select name="category">
+        {% for c in categories %}
+        <option value="{{ c }}"{% if c == req.category %} selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Budget max (Nu.)
+      <input type="text" name="budget" value="{{ req.budget }}" />
+    </label>
+    <label>Origin
+      <input type="text" name="origin" value="{{ req.origin }}" maxlength="120" />
+    </label>
+    <label>Destination
+      <input type="text" name="destination" value="{{ req.destination }}" maxlength="120" />
+    </label>
+    <label>When
+      <input type="text" name="when" value="{{ req.when }}" maxlength="120" />
+    </label>
+    <label>Skills (comma-separated)
+      <input type="text" name="skills" value="{{ req.skills }}" />
+    </label>
+    <label>Salary min (Nu.)
+      <input type="text" name="salary_min" value="{{ req.salary_min }}" />
+    </label>
+    <label>Salary max (Nu.)
+      <input type="text" name="salary_max" value="{{ req.salary_max }}" />
+    </label>
+    <label>Deadline
+      <select name="duration">
+        <option value="keep" selected>Keep{% if req.expires_at %} (until {{ req.expires_at }} UTC){% endif %}</option>
+        <option value="none">No deadline</option>
+        {% for name, minutes in durations %}
+        {% if name != "none" %}<option value="{{ name }}">Search {{ name }}</option>{% endif %}
+        {% endfor %}
+      </select>
+    </label>
+    <label>How many matches do you need?
+      <input type="number" name="quantity" min="1" max="100" value="{{ req.fulfillment.requested }}" />
+    </label>
+    <button class="button secondary" type="submit">Save changes</button>
+  </form>
+</details>
 {% endif %}
 <section>
   <h2>Manage this search</h2>

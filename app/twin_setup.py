@@ -1,12 +1,9 @@
-"""Conversational twin creation (Part 1).
+"""Draft-only typed questionnaire for the existing twin creation form.
 
-One question at a time, shared by voice and typed text: both call
-``setup_turn`` against the same per-user state, so switching
-interfaces never loses progress. Nothing is invented: skipped
-questions stay empty, and the twin is created (private) only after
-the owner approves the summary.
+Skipped questions stay empty. This helper never persists a twin; the
+owner reviews and submits the normal form after the draft.
 
-State shape (kept by the caller, e.g. the voice session)::
+State shape carried between setup form posts::
     {"answers": {field: value}, "step": int, "phase": "collect"|"review"}
 """
 
@@ -14,48 +11,29 @@ from __future__ import annotations
 
 import re
 
-from .conversations import audit
-from .db import create_twin, get_twin_by_user
-
 #: (field, question). Order is the interview order.
 STEPS: tuple[tuple[str, str], ...] = (
-    ("display_name",
-     "What should I call your twin?"),
-    ("headline",
-     "Give your twin a one-line headline, like 'Fullstack developer"
-     " for hire'. (Say 'skip' for any question.)"),
-    ("education",
-     "What is your education background?"),
-    ("experience",
-     "Summarize your professional experience in a sentence or two."),
-    ("skills",
-     "List your skills, separated by commas."),
-    ("interests",
-     "What are your interests?"),
-    ("preferences",
-     "Any work or communication preferences I should know?"),
-    ("comm_style",
-     "How should your twin communicate? For example: friendly and"
-     " brief, formal, or technical."),
-    ("goals",
-     "What are your professional goals?"),
-    ("bio",
-     "Anything else your twin should know about you?"),
+    ("display_name", "What should I call your twin?"),
+    ("headline", "What one-line headline describes you? You can say skip."),
+    ("role", "Which best describes your twin: job_seeker, employer, collaboration, professional, independent, or other?"),
+    ("skills", "What are your personal skills? List them with commas; skip if none."),
+    ("experience_years", "How many years of experience do you have? Enter a number or skip."),
+    ("location", "What city or area are you based in?"),
+    ("availability", "When are you generally available?"),
+    ("interests", "What are your interests? List them with commas or skip."),
+    ("bio", "Anything else your twin should know about you?"),
+    ("tone", "How should your twin communicate? For example, friendly and concise."),
 )
 
 #: Words that address a collected field for change/edit commands.
 FIELD_ALIASES = {
     "display_name": ("name", "display name", "twin name", "called"),
     "headline": ("headline", "title", "tagline"),
-    "education": ("education", "school", "degree", "university",
-                  "college", "studied"),
-    "experience": ("experience", "work", "job", "career", "history"),
     "skills": ("skill", "skills"),
     "interests": ("interest", "interests", "hobbies", "hobby"),
-    "preferences": ("preference", "preferences", "likes"),
-    "comm_style": ("style", "tone", "communication", "voice",
-                   "communicate"),
-    "goals": ("goal", "goals", "ambition", "aim"),
+    "tone": ("style", "tone", "communication", "communicate"),
+    "experience_years": ("experience years", "years of experience"),
+    "role": ("role", "twin role"),
     "bio": ("bio", "about", "other", "background", "rest"),
 }
 
@@ -125,42 +103,34 @@ def _summary(answers: dict) -> str:
 
 
 def profile_from_answers(answers: dict) -> dict:
-    """Build the twin profile dict. Only stated facts, never guesses."""
-    skills = answers.get("skills")
-    interests = answers.get("interests")
-    preferences = answers.get("preferences")
-    experience = answers.get("experience") or ""
+    """Build only fields supported by the current form; skills stay personal."""
     years = None
-    found = _YEARS.search(experience)
-    if found:
-        years = max(0, min(80, int(found.group(1))))
+    raw_years = answers.get("experience_years")
+    if raw_years:
+        try:
+            years = max(0, min(80, int(raw_years)))
+        except (TypeError, ValueError):
+            years = None
     return {
         "headline": answers.get("headline") or "",
-        "skills": list(skills) if skills else [],
+        "role": answers.get("role") or "",
+        "skills": list(answers.get("skills") or []),
         "experience_years": years,
-        "experience": experience,
-        "education": answers.get("education") or "",
-        "interests": list(interests) if interests else [],
-        "preferences": list(preferences) if preferences else [],
-        "goals": answers.get("goals") or "",
+        "interests": list(answers.get("interests") or []),
         "bio": answers.get("bio") or "",
-        "location": "",
-        "availability": "",
+        "location": answers.get("location") or "",
+        "availability": answers.get("availability") or "",
     }
 
 
 def review_text(state: dict) -> str:
-    return ("Here is your twin's draft. It stays private until you say"
-            " so. Say 'approve' to activate it, or 'edit <field>' to"
-            " change something:\n" + _summary(state["answers"]))
+    return ("Here is your draft. Nothing has been saved. Continue to the"
+            " existing profile form to review sharing settings and create"
+            " your private twin:\n" + _summary(state["answers"]))
 
 
 def setup_turn(state: dict, text: str) -> dict:
-    """Advance the interview. Returns {"reply", "done", "cancelled"}.
-
-    ``done`` with ``approved`` True means the caller should persist
-    the twin via ``activate``.
-    """
+    """Advance a draft interview; persistence is handled by the twin form."""
     cleaned = _clip(text, 2000)
     lowered = re.sub(r"[.!?]+$", "", cleaned.lower()).strip()
     phase = state.get("phase", "collect")
@@ -174,12 +144,15 @@ def setup_turn(state: dict, text: str) -> dict:
             return False
         return any(lowered.startswith(p + " ") for p in phrases)
 
-    if phase == "review":
-        if heard("approve", "approved", "yes", "yeah", "yep",
-                 "activate", "looks good", "confirm", "do it",
-                 "go ahead"):
-            return {"reply": "", "done": True, "approved": True,
+    if phase == "paused":
+        if heard("resume", "resume setup", "continue setup"):
+            state["phase"] = "collect"
+            return {"reply": current_question(state), "done": False,
                     "cancelled": False}
+        return {"reply": "Your draft is still on this page. Say 'resume' to continue.",
+                "done": False, "cancelled": False}
+
+    if phase == "review":
         if heard("cancel", "stop", "abort", "never mind",
                  "nevermind", "forget it", "quit", "exit"):
             return {"reply": "Twin creation cancelled. Nothing was"
@@ -198,9 +171,9 @@ def setup_turn(state: dict, text: str) -> dict:
             state["resume_review"] = True
             return {"reply": f"OK, {_summary_question(field)}",
                     "done": False, "cancelled": False}
-        return {"reply": "Say 'approve' to activate your twin, or"
-                " 'edit <field>' to change an answer. Say 'summary'"
-                " to see the draft again.",
+        return {"reply": "Continue to the profile form to review and submit"
+                " your twin, or say 'edit <field>' to change an answer."
+                " Say 'summary' to see the draft again.",
                 "done": False, "cancelled": False}
 
     # collect phase commands
@@ -209,8 +182,8 @@ def setup_turn(state: dict, text: str) -> dict:
         return {"reply": "Twin creation cancelled. Nothing was saved.",
                 "done": True, "approved": False, "cancelled": True}
     if heard("pause", "pause this", "hold on", "wait"):
-        return {"reply": "Paused. Say 'resume' any time to continue"
-                " where you left off.",
+        state["phase"] = "paused"
+        return {"reply": "Paused. Your draft remains on this page. Say 'resume' to continue.",
                 "done": False, "cancelled": False, "paused": True}
     if heard("summary", "show summary", "show me", "review",
              "what do you have", "what have you got"):
@@ -238,11 +211,11 @@ def setup_turn(state: dict, text: str) -> dict:
                 "cancelled": False}
     if _is_skip(cleaned):
         state["answers"].pop(target, None)
-    elif target in ("skills", "interests", "preferences"):
+    elif target in ("skills", "interests"):
         state["answers"][target] = _csv(cleaned)
     elif target == "display_name":
         state["answers"][target] = _clip(cleaned, 60)
-    elif target == "comm_style":
+    elif target in ("tone", "role", "experience_years"):
         state["answers"][target] = _clip(cleaned, 120)
     else:
         state["answers"][target] = _clip(cleaned, 1000)
@@ -272,26 +245,3 @@ def start_text(owner_name: str) -> str:
             f" one at a time; say 'skip' for any of them. "
             f"{STEPS[0][1]}")
 
-
-def activate(conn, user_id: int, owner_name: str,
-             state: dict) -> dict:
-    """Persist the approved draft as a PRIVATE twin. Returns a report."""
-    if get_twin_by_user(conn, user_id) is not None:
-        raise ValueError("You already have a twin. Say 'update my"
-                         " twin' to change it.")
-    answers = state.get("answers", {})
-    display = answers.get("display_name") or (
-        f"{owner_name}'s twin" if owner_name else "My twin")
-    tone = answers.get("comm_style") or "friendly"
-    twin_id = create_twin(
-        conn, user_id=user_id, display_name=_clip(display, 60)[:60],
-        persona="A helpful personal twin.",
-        tone=tone, profile=profile_from_answers(answers),
-        authorized_fields=[], avatar_seed=f"user-{user_id}-twin",
-        is_public=False)
-    audit(conn, None, "twin.setup_completed", user_id,
-          f"twin={twin_id} fields={len(answers)}")
-    conn.commit()
-    filled = sum(1 for _f, _q in STEPS if answers.get(_f))
-    return {"twin_id": twin_id, "display_name": display,
-            "filled": filled, "total": len(STEPS)}

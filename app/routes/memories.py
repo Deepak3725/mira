@@ -127,6 +127,40 @@ def _own_memory_or_404(conn, twin_id: int, mem_id: int):
     return mem
 
 
+@router.post("/memories/add")
+def memory_add(request: Request, content: str = Form(""),
+               category: str = Form("general"),
+               csrf_token: str = Form("")):
+    """Teach the twin one fact: it lands in the review queue as pending."""
+    me, twin_id = _my_twin_id(request)
+    if me is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if twin_id is None:
+        return RedirectResponse(url="/twin/new", status_code=303)
+    auth.require_session_csrf(request, csrf_token, me["id"])
+    if not auth.check_rate_limit(f"memwrite:{_ip(request)}", 60, 3600):
+        return RedirectResponse(url="/memories", status_code=303)
+    conn = get_connection()
+    try:
+        try:
+            created = memories.create_memory(
+                conn, twin_id=twin_id, content=(content or "").strip(),
+                source="manual",
+                category=category if category in memories.CATEGORIES
+                else "general")
+        except MemoryError as exc:
+            return RedirectResponse(
+                url=f"/memories?error={str(exc)[:120]}", status_code=303)
+        conn.commit()
+    finally:
+        conn.close()
+    if created is None:
+        return RedirectResponse(url="/memories?notice=duplicate",
+                                status_code=303)
+    return RedirectResponse(url="/memories?notice=teaching-added",
+                            status_code=303)
+
+
 @router.post("/memories/{mem_id}/approve")
 def memory_approve(request: Request, mem_id: int, content: str = Form(""),
                    csrf_token: str = Form("")):

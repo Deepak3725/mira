@@ -5,9 +5,11 @@
   <p class="back"><a href="/me">&larr; My space</a></p>
   <h1>{% if mode == "new" %}Create my twin{% else %}Edit my twin{% endif %}</h1>
   <p class="lede">Tick the boxes for fields your twin may share. Unchecked fields stay private and are never sent anywhere.</p>
+{% if mode == "new" %}<p class="lede"><a href="/twin/setup">Use guided text setup</a></p>{% endif %}
 </section>
 <form class="twin-form" method="post" action="/twin/{{ mode }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  {% if notice %}<p class="form-note" role="status">{{ notice }}</p>{% endif %}
   <fieldset>
     <legend>Identity</legend>
     <label>Twin display name <input type="text" name="display_name" required maxlength="60" value="{{ form.display_name }}" /></label>
@@ -22,6 +24,15 @@
     {%- endmacro %}
     <label>Headline <input type="text" name="headline" maxlength="200" value="{{ form.headline }}" /></label>
     {{ share("headline", "headline") }}
+    <label>Role
+      <select name="twin_role">
+        <option value="">—</option>
+        {% for role in form.twin_roles %}
+        <option value="{{ role }}"{% if role == form.twin_role %} selected{% endif %}>{{ role | replace("_", " ") | title }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {{ share("role", "role") }}
     <label>Skills (comma-separated) <input type="text" name="skills" value="{{ form.skills }}" /></label>
     {{ share("skills", "skills") }}
     <label>Experience (years) <input type="number" name="experience_years" min="0" max="80" value="{{ form.experience_years }}" /></label>

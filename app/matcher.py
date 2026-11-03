@@ -38,17 +38,39 @@ from .db import (
     set_queue_status,
     claim_due_match_events,
     update_match,
+    update_opportunity,
     update_request,
 )
 from .matching import (
     _keywords,
     _offering_attributes,
+    offer_expired,
     score_provider,
 )
 
 #: Owner-facing search durations (form value -> minutes, 0 = no deadline).
 SEARCH_DURATIONS = (("none", 0), ("1h", 60), ("2h", 120), ("5h", 300),
                     ("1d", 1440), ("1w", 10080))
+
+#: Human labels for duration form values (posting confirmations).
+SEARCH_DURATION_LABELS = {
+    "none": "no deadline", "1h": "1 hour", "2h": "2 hours",
+    "5h": "5 hours", "1d": "1 day", "1w": "1 week",
+}
+
+
+def duration_minutes(value: str, default: int = 0) -> int:
+    """Minutes for a duration form value (unknown -> default)."""
+    for name, minutes in SEARCH_DURATIONS:
+        if value == name:
+            return minutes
+    return default
+
+
+def duration_label(value: str) -> str:
+    """Human label for a duration form value (unknown -> '1 week')."""
+    return SEARCH_DURATION_LABELS.get(value,
+                                      SEARCH_DURATION_LABELS["1w"])
 
 MAX_QUEUE_ATTEMPTS = 5
 RETRY_BASE_SECONDS = 60
@@ -87,10 +109,26 @@ _SEEKS_PEOPLE_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: Collaboration is peer-to-peer: two "looking for a cofounder" posts are
+#: on the same side yet compatible, so they get their own direction that
+#: matches only itself (see compatible). Concrete categories (transport,
+#: job, ...) keep the supply/demand rules; only collaboration/other posts
+#: consult the text signals.
+_COLLAB_RE = re.compile(
+    r"\bcollaborat\w*\b|\bcofounder\b|\bco-founder\b|\bteam up\b"
+    r"|\blooking for\b.{0,30}\bpartner\b|\bseeking\b.{0,30}\bpartner\b",
+    re.IGNORECASE,
+)
 
-def need_direction(text: str) -> str:
-    """Classify a need post as supply-side or demand-side."""
+
+def need_direction(text: str, category: str = "") -> str:
+    """Classify a need post as supply-side, demand-side, or peer."""
     text = text or ""
+    cat = (category or "").strip().lower()
+    if cat == "collaboration":
+        return "peer"
+    if cat in ("", "other") and _COLLAB_RE.search(text):
+        return "peer"
     if _SUPPLY_RE.search(text) or _SEEKS_PEOPLE_RE.search(text):
         return "supply"
     return "demand"
@@ -150,15 +188,26 @@ def _counterpart_facts(conn: Connection, counterpart_type: str,
         opp = get_opportunity(conn, counterpart_id)
         if opp is None or opp["status"] != "open":
             return None
+        if offer_expired(opp, now_stamp()):
+            return None  # search duration elapsed; owner may reopen
         text = f"{opp['title']} {(opp['description'] or '')}"
         reqs: dict = {}
-        places = parse_places(text + " " + (opp["location"] or ""))
+        # Parse the description first: title+description concatenation
+        # glues sentence boundaries ("Paro. Taxi available ...") into
+        # bogus multi-word places. Fall back to the full text only for
+        # endpoints the description does not state.
+        places = parse_places(opp["description"] or "")
+        if not (places[0] and places[1]):
+            fallback = parse_places(text + " " + (opp["location"] or ""))
+            places = (places[0] or fallback[0],
+                      places[1] or fallback[1])
         if places[0]:
             reqs["origin"] = places[0]
         if places[1]:
             reqs["destination"] = places[1]
         peer_twin = get_twin_by_user(conn, opp["owner_user_id"])
         return {"requirements": reqs, "text": text, "direction": "supply",
+                "category": (opp["category"] or ""),
                 "attrs": _offering_attributes(opp),
                 "owner_user_id": opp["owner_user_id"],
                 "twin": peer_twin, "title": opp["title"],
@@ -170,9 +219,16 @@ def _counterpart_facts(conn: Connection, counterpart_type: str,
         return None
     reqs = _as_dict(req["requirements_json"])
     peer_twin = get_twin_by_user(conn, req["owner_user_id"])
+    attrs: dict = {"tags": _str_list(reqs.get("skills"))}
+    for key in ("salary_min", "salary_max"):
+        if isinstance(reqs.get(key), (int, float)) \
+                and not isinstance(reqs.get(key), bool):
+            attrs[key] = float(reqs[key])
     return {"requirements": reqs, "text": req["need_text"],
-            "direction": need_direction(req["need_text"]),
-            "attrs": {"tags": _str_list(reqs.get("skills"))},
+            "direction": need_direction(req["need_text"],
+                                        req["category"] or ""),
+            "category": (req["category"] or ""),
+            "attrs": attrs,
             "owner_user_id": req["owner_user_id"], "twin": peer_twin,
             "title": need_engine.request_title(req["need_text"]),
             "skills": _str_list(reqs.get("skills")), "kind": "need"}
@@ -196,17 +252,41 @@ def parse_places(text: str) -> tuple[str | None, str | None]:
     return _shared(text or "")
 
 
+#: Category pairs that never match, no matter the score. Empty and
+#: "other" are wildcards that match anything.
+_INCOMPATIBLE_CATEGORIES = frozenset({
+    frozenset({"job", "transport"}),
+})
+
+
+def categories_compatible(search_category: str,
+                          counter_category: str) -> bool:
+    """False only for fundamentally mismatched domains (job vs transport)."""
+    left = (search_category or "").strip().lower()
+    right = (counter_category or "").strip().lower()
+    if left in ("", "other") or right in ("", "other"):
+        return True
+    return frozenset({left, right}) not in _INCOMPATIBLE_CATEGORIES
+
+
 def compatible(search_reqs: dict, search_text: str, search_direction: str,
-               counter: dict) -> tuple[int, str] | None:
+               counter: dict, search_category: str = "") -> tuple[int, str] | None:
     """Score a search/counterpart pair, or None when incompatible.
 
     Gates (all must pass): opposite sides of the market (supply meets
-    demand, never supply-supply or demand-demand), then at least one
-    positive relevance signal — shared route, shared skill, two or more
-    shared keywords, or a decisive structured fit. A single common
-    word is never enough.
+    demand, never supply-supply or demand-demand; peers match peers),
+    compatible categories (a score never overrides a job-vs-transport
+    mismatch), then at least one positive relevance signal — shared
+    route, shared skill, two or more shared keywords, or a decisive
+    structured fit. A single common word is never enough.
     """
     if search_direction == counter["direction"]:
+        if search_direction != "peer":
+            return None
+    elif search_direction == "peer" or counter["direction"] == "peer":
+        return None
+    if not categories_compatible(search_category,
+                                 counter.get("category", "")):
         return None
     structured = score_provider(search_reqs, counter["attrs"])
     if structured.excluded_reason:
@@ -295,8 +375,10 @@ def _consider_pair(conn: Connection, search: Row, counterpart_type: str,
                 merged.append(skill)
         if merged:
             search_reqs = dict(search_reqs, skills=merged)
-    verdict = compatible(search_reqs, search["need_text"],
-                         need_direction(search["need_text"]), counter)
+    verdict = compatible(
+        search_reqs, search["need_text"],
+        need_direction(search["need_text"], search["category"] or ""),
+        counter, search_category=search["category"] or "")
     if verdict is None:
         return None
     score, reason = verdict
@@ -318,9 +400,8 @@ def _consider_pair(conn: Connection, search: Row, counterpart_type: str,
             f"New match for '{title}'",
             f"{counter['title']} ({counter['kind']}) looks relevant.",
             f"/requests/{search['id']}")
-    peer_word = "search" if counterpart_type == "opportunity" else "need"
     _notify(conn, counter["owner_user_id"], "match",
-            f"Your {peer_word} '{counter['title'][:60]}' has interest",
+            f"Your post '{counter['title'][:60]}' has interest",
             f"It matches {search['twin_name']}'s search '{title}'.",
             "/requests")
     if search["status"] == "open":
@@ -418,7 +499,7 @@ def trigger_matching(conn: Connection, event_type: str, ref_type: str,
 
 
 def expire_due(conn: Connection, now: str) -> int:
-    """Expire past-deadline searches; history and matches preserved."""
+    """Expire past-deadline searches and offers; history preserved."""
     rows = list(conn.execute(
         "SELECT id, owner_user_id, need_text FROM requests"
         " WHERE status IN ('open', 'matched', 'chatting', 'decided')"
@@ -431,9 +512,21 @@ def expire_due(conn: Connection, now: str) -> int:
                 f"'{need_engine.request_title(row['need_text'])}' expired."
                 " Extend it to keep searching.",
                 f"/requests/{row['id']}")
-    if rows:
+    offers = list(conn.execute(
+        "SELECT id, owner_user_id, title FROM opportunities"
+        " WHERE status = 'open'"
+        " AND expires_at IS NOT NULL AND expires_at <= ?",
+        (now,)))
+    for offer in offers:
+        update_opportunity(conn, offer["id"], status="closed")
+        _notify(conn, offer["owner_user_id"], "expired",
+                "Your offer's search period ended",
+                f"'{(offer['title'] or '')[:80]}' expired."
+                " Reopen it to keep receiving interest.",
+                f"/opportunities/{offer['id']}")
+    if rows or offers:
         conn.commit()
-    return len(rows)
+    return len(rows) + len(offers)
 
 
 def process_due(conn: Connection, now: str | None = None,
@@ -515,6 +608,64 @@ def _peer_user_id(conn: Connection, match: Row) -> int | None:
     return req["owner_user_id"] if req else None
 
 
+def is_mutual(match: Row) -> bool:
+    """True only when BOTH sides accepted (never one-sided).
+
+    Status alone is not mutuality: the search owner's acceptance moves a
+    match to 'accepted' while the peer may still be undecided.
+    """
+    try:
+        return bool(match["owner_accepted"] and match["peer_accepted"]
+                    and match["status"] == "accepted")
+    except (KeyError, IndexError, TypeError):
+        return False
+
+
+def _accept_message_value(match: Row) -> str:
+    try:
+        return match["accept_message"] or ""
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+def peer_contact_for_match(conn: Connection, match: Row,
+                           viewer_user_id: int | None) -> dict[str, str]:
+    """Peer's phone/email for a mutually accepted match, else {}.
+
+    Contact details are never exposed on a potential match or a
+    one-sided acceptance — only mutual acceptance unlocks them, and
+    only for the two participants.
+    """
+    if not is_mutual(match):
+        return {}
+    search = get_request(conn, match["search_request_id"])
+    if search is None:
+        return {}
+    peer_id = _peer_user_id(conn, match)
+    if viewer_user_id == search["owner_user_id"]:
+        other_id = peer_id
+    elif viewer_user_id == peer_id:
+        other_id = search["owner_user_id"]
+    else:
+        return {}
+    if other_id is None:
+        return {}
+    twin = get_twin_by_user(conn, other_id)
+    if twin is None:
+        return {}
+    from .db import twin_profile
+
+    profile = twin_profile(twin)
+    phone = (profile.get("phone") or "").strip()
+    email = (profile.get("personal_email") or "").strip()
+    contact: dict[str, str] = {}
+    if phone:
+        contact["phone"] = phone
+    if email:
+        contact["email"] = email
+    return contact
+
+
 def _start_coordination_chat(conn: Connection, match: Row) -> int | None:
     """Open the twin chat for an accepted match (bounded, best-effort).
 
@@ -548,10 +699,16 @@ def _start_coordination_chat(conn: Connection, match: Row) -> int | None:
 
 
 def accept_match(conn: Connection, match_id: int,
-                 user_id: int | None) -> Row:
+                 user_id: int | None, message: str = "") -> Row:
     """Record one side's acceptance. Only the search owner's acceptance
     moves a match to accepted (peer acceptance is recorded alongside);
-    either side's rejection is terminal for the pair."""
+    either side's rejection is terminal for the pair.
+
+    The search owner (poster) may attach a short message (interview
+    details, pickup info); it is delivered to the peer through the
+    accepted workflow only. When the second side accepts, both parties
+    get a 'connected' notification and contact details unlock.
+    """
     match = get_match(conn, match_id)
     if match is None:
         raise MatcherError("Match not found.")
@@ -563,19 +720,25 @@ def accept_match(conn: Connection, match_id: int,
         raise MatcherError("Only a participant can decide.")
     if match["status"] in ("rejected", "withdrawn"):
         raise MatcherError("This match was already decided.")
+    note = " ".join((message or "").split())[:500]
+    was_mutual = is_mutual(match)
     if user_id == search["owner_user_id"]:
         numbers = fulfillment(conn, search["id"])
         if numbers["remaining"] <= 0 and not match["owner_accepted"]:
             _recheck_fulfillment(conn, search["id"])
             conn.commit()
             raise MatcherError("This search is already fulfilled.")
-        update_match(conn, match_id, status="accepted",
-                     owner_accepted=1)
+        fields: dict = {"status": "accepted", "owner_accepted": 1}
+        if note and not _accept_message_value(match):
+            fields["accept_message"] = note
+        update_match(conn, match_id, **fields)
         conv_id = _start_coordination_chat(conn, match)
         if peer_id is not None:
+            body = f"{search['twin_name']} accepted the match."
+            if note or _accept_message_value(match):
+                body += f" Message: {note or _accept_message_value(match)}"
             _notify(conn, peer_id, "accepted",
-                    "Your post was accepted",
-                    f"{search['twin_name']} accepted the match.",
+                    "Your post was accepted", body,
                     f"/conversations/{conv_id}" if conv_id
                     else "/requests")
         _recheck_fulfillment(conn, search["id"])
@@ -586,7 +749,23 @@ def accept_match(conn: Connection, match_id: int,
                 "They accepted the match on their side.",
                 f"/requests/{search['id']}")
     conn.commit()
-    return get_match(conn, match_id)
+    done = get_match(conn, match_id)
+    if done is not None and not was_mutual and is_mutual(done):
+        title = need_engine.request_title(search["need_text"])
+        _notify(conn, search["owner_user_id"], "connected",
+                "You're connected",
+                f"Both sides accepted the match for '{title}'."
+                " Contact details are now shared.",
+                f"/requests/{search['id']}")
+        if peer_id is not None:
+            _notify(conn, peer_id, "connected",
+                    "You're connected",
+                    f"Both sides accepted the match for '{title}'."
+                    " Contact details are now shared.",
+                    "/requests")
+        conn.commit()
+        done = get_match(conn, match_id)
+    return done
 
 
 def reject_match(conn: Connection, match_id: int,

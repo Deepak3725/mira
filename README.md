@@ -58,7 +58,7 @@ what personal twins can do — the product is your twin, not the demo cast.
   pay or commit.
 - **Find Something (universal posts)** — one workflow for jobs, taxis,
   services, tutors, collaborators, and arbitrary needs: describe it in
-  words (form or voice), preview, confirm, edit, or withdraw. Discovery
+  words, preview, confirm, edit, or withdraw. Discovery
   runs both directions: seekers find offers, and helpers discover open
   needs they could answer. Categories are labels, never gates.
 - **Two-sided coordination** — every twin chat appears in both owners'
@@ -116,7 +116,7 @@ python -m unittest discover -s tests -t .
 Do NOT use `discover -s tests` without `-t .` or run test files directly as
 scripts: both bypass the safety bootstrap and ambient provider configuration
 would apply. The HTTP E2E module drives the app fully in-process through a
-socket-free ASGI transport, so all tests (610, including 10 E2E, 14
+socket-free ASGI transport, so all tests (632, including 10 E2E, 14
 full-stack journey tests, and the 11-journey synthetic-user suite) pass
 even in restricted sandboxes.
 

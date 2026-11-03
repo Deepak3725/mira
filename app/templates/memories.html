@@ -9,6 +9,23 @@
 {% if notice %}<p class="form-note" role="status">{{ notice }}</p>{% endif %}
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
 <section class="me-card">
+  <h2>Teach one thing</h2>
+  <p class="lede">Type a fact for your twin. It goes to the review queue below — approve it and your twin will use it in conversations and matching.</p>
+  <form method="post" action="/memories/add"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>What should your twin learn?
+      <input type="text" name="content" maxlength="2000" required placeholder="e.g. I prefer morning meetings." />
+    </label>
+    <label>Category
+      <select name="category">
+        {% for c in categories %}
+        <option value="{{ c }}">{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="button" type="submit">Teach my twin</button>
+  </form>
+</section>
+<section class="me-card">
   <h2>Import</h2>
   <p class="lede">Upload a <strong>file you export yourself</strong> (max {{ max_mb }} MB, <code>.json</code> or <code>.zip</code>): ChatGPT <em>Settings - Data controls - Export data</em> (<code>conversations.json</code> or the whole zip), Claude <em>Settings - Privacy - Export data</em> (zip), Gemini via Google Takeout (<em>My Activity - Gemini Apps</em>), or a hand-made <code>{"memories": [...]}</code> file. Only your own messages are extracted; assistant replies are ignored. This is a one-time manual file import - MIRA never connects to your AI accounts, never scrapes them, and never syncs automatically. Meta AI has no machine-readable export and cannot be imported yet.</p>
   <form method="post" action="/memories/import" enctype="multipart/form-data" id="import-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />

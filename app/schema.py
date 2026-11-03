@@ -51,6 +51,7 @@ _TABLES: list[tuple[str, list[str], list[str]]] = [
         "status TEXT NOT NULL DEFAULT 'open'",
         "category TEXT NOT NULL DEFAULT ''",
         "attributes_json TEXT NOT NULL DEFAULT '{}'",
+        "expires_at TEXT",
         "{TS_CREATED}",
     ], []),
     ("requests", [
@@ -232,6 +233,7 @@ _TABLES: list[tuple[str, list[str], list[str]]] = [
         "peer_accepted INTEGER NOT NULL DEFAULT 0",
         "score INTEGER NOT NULL DEFAULT 0",
         "reason TEXT NOT NULL DEFAULT ''",
+        "accept_message TEXT NOT NULL DEFAULT ''",
         "{TS_CREATED}",
         "{TS_UPDATED}",
     ], ["UNIQUE (search_request_id, counterpart_type, counterpart_id)"]),

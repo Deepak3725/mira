@@ -19,9 +19,20 @@ from .request_parse import parse_need
 
 #: Strong offer signals: providing/hiring wins over "need" phrasing
 #: ("I'm hiring ... I need someone with X" is still an offer).
+#: Employment seeking ("looking for an employee", "need a frontend
+#: developer") is also an offer: the poster provides the job, and
+#: seekers match it with their needs.
+#: Employment roles that mark the poster as the job provider. Kept
+#: narrow on purpose: "need a designer/plumber" is usually a service
+#: need, matched by providers' offers — only unambiguous hiring
+#: phrasing posts as an offer (the review step can override either way).
+_EMPLOYMENT_ROLES = (
+    r"employee|staff|intern|hire|co-?founder|developer|engineer"
+)
 _STRONG_OFFER = (
     r"\bhiring\b",
     r"\bwe\s+are\s+hiring\b",
+    r"\bjoin\s+(my|our|the)\s+team\b",
     r"\bi\s+offer\b",
     r"\bwe\s+offer\b",
     r"\boffering\b",
@@ -31,6 +42,14 @@ _STRONG_OFFER = (
     r"\bi\s+(teach|give\s+\w+\s+lessons)\b",
     r"\blessons\b.{0,20}\b(on\s+weekends|available)\b",
     r"\bi\s+have\b.{0,30}\b(taxi|car|room|seat|space)\b",
+    # One modifier word may sit between the article and the role
+    # ("looking for a frontend developer", "need a senior engineer").
+    r"\blooking\s+for\s+(?:an?\s+)?(?:[A-Za-z][\w+#.-]*\s+)?("
+    + _EMPLOYMENT_ROLES + r")\b",
+    r"\bneed\s+(?:an?\s+)?(?:[A-Za-z][\w+#.-]*\s+)?("
+    + _EMPLOYMENT_ROLES + r")\b",
+    r"\bseeking\s+(?:an?\s+)?(?:[A-Za-z][\w+#.-]*\s+)?(employee|staff"
+    r"|intern|hire|co-?founder)\b",
 )
 _STRONG_OFFER_RE = re.compile("|".join(_STRONG_OFFER), re.IGNORECASE)
 
@@ -58,6 +77,7 @@ _IN_PLACE_RE = re.compile(
 
 _CATEGORY_TO_KIND = {
     "transport": "service",
+    "job": "job",
     "service": "service",
     "supply": "supply",
     "collaboration": "collaboration",
@@ -66,6 +86,12 @@ _CATEGORY_TO_KIND = {
 
 _HIRING_RE = re.compile(r"\bhiring\b|\bhire\b|\bjoin\s+my\s+team\b",
                         re.IGNORECASE)
+
+#: Employment-role mentions that mark an offer as a job posting even
+#: when the category parser stayed generic ("need a frontend
+#: developer" carries no job keyword but is clearly a job post).
+_JOB_ROLE_RE = re.compile(
+    r"\b(employee|staff|intern|developer|engineer)\b", re.IGNORECASE)
 
 MAX_DESCRIPTION = 4000
 
@@ -122,14 +148,23 @@ def parse_posting(text: str) -> dict:
     reqs = parsed["requirements"]
     location = (reqs.get("destination") or reqs.get("origin")
                 or _in_place(clean))
+    kind = classify_posting(clean)
+    category = parsed["category"]
+    if kind == "offer" and category == "other" and (
+            _HIRING_RE.search(clean) or _JOB_ROLE_RE.search(clean)):
+        category = "job"
+    salary_min = reqs.get("salary_min")
+    salary_max = reqs.get("salary_max")
     return {
-        "kind": classify_posting(clean),
+        "kind": kind,
         "title": _title(clean),
         "description": clean,
-        "category": parsed["category"],
+        "category": category,
         "skills": list(reqs.get("skills", [])),
         "location": location,
         "budget_max": reqs.get("budget_max"),
+        "salary_min": salary_min if salary_min is not None else "",
+        "salary_max": salary_max if salary_max is not None else "",
         "when_text": reqs.get("when_text", ""),
         "quantity": parsed["quantity"] or 1,
     }
@@ -137,23 +172,36 @@ def parse_posting(text: str) -> dict:
 
 def publish_offer(conn: Connection, *, owner_user_id: int,
                   title: str, description: str, skills: list,
-                  location: str, category: str) -> int:
+                  location: str, category: str,
+                  salary_min: float | None = None,
+                  salary_max: float | None = None,
+                  expires_at: str | None = None) -> int:
     """Persist an offer and trigger real discovery. Returns opp id."""
     title = (title or "").strip()[:200]
     if not title:
         raise PostingError("Please give the offer a title.")
-    if _HIRING_RE.search(f"{title} {description}"):
+    clean_category = (category or "").strip().lower()[:40]
+    if _HIRING_RE.search(f"{title} {description}") \
+            or _JOB_ROLE_RE.search(f"{title} {description}") \
+            or clean_category == "job":
         kind = "job"
+        if not clean_category:
+            clean_category = "job"
     else:
-        kind = _CATEGORY_TO_KIND.get(
-            (category or "").strip().lower(), "service")
+        kind = _CATEGORY_TO_KIND.get(clean_category or "other", "service")
+    attributes: dict = {}
+    if salary_min is not None:
+        attributes["salary_min"] = salary_min
+    if salary_max is not None:
+        attributes["salary_max"] = salary_max
     opp_id = create_opportunity(
         conn, owner_user_id=owner_user_id, kind=kind,
         title=title, description=(description or "")[:MAX_DESCRIPTION],
         required_skills=[s.strip()[:60] for s in (skills or [])
                          if str(s).strip()][:20],
         location=(location or "").strip()[:120],
-        category=(category or "").strip().lower()[:40])
+        category=clean_category, attributes=attributes or None,
+        expires_at=expires_at)
     conn.commit()
     matcher.trigger_matching(conn, "opportunity_saved", "opportunity",
                              opp_id)
@@ -163,19 +211,25 @@ def publish_offer(conn: Connection, *, owner_user_id: int,
 def publish_need(conn: Connection, *, twin_id: int, owner_user_id: int,
                  need_text: str, category: str, skills: list,
                  location: str, quantity: int = 1,
-                 expires_at: str | None = None) -> int:
+                 expires_at: str | None = None,
+                 salary_min: float | None = None,
+                 salary_max: float | None = None) -> int:
     """Persist a need as an active search and trigger discovery."""
     clean = (need_text or "").strip()[:2000]
     if not clean:
         raise PostingError("Please describe what you need.")
     # Start from what the description itself states (origin, when,
-    # budget, ...), then let the review fields override.
+    # budget, salary, ...), then let the review fields override.
     requirements = dict(parse_need(clean)["requirements"])
     if skills:
         requirements["skills"] = [str(s).strip()[:60] for s in skills
                                   if str(s).strip()][:10]
     if location:
         requirements["destination"] = location.strip()[:120]
+    if salary_min is not None:
+        requirements["salary_min"] = salary_min
+    if salary_max is not None:
+        requirements["salary_max"] = salary_max
     if expires_at is None:
         expires_at = matcher.plus_minutes(
             matcher.now_stamp(), 10080)  # 1 week default

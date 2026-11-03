@@ -45,17 +45,12 @@ def convo_list(request: Request, error: str = ""):
             if me
             else []
         )
-        demos = [
-            {"id": c["id"], "name_a": c["name_a"], "name_b": c["name_b"],
-             "status": c["status"], "purpose": c["purpose"], "opp_title": c["opp_title"]}
-            for c in engine.list_demos(conn)
-        ]
     finally:
         conn.close()
     return templates.TemplateResponse(
         request, "conversations.html",
         {"app_name": settings.app_name, "me": me, "mine": mine,
-         "demos": demos, "error": error},
+         "error": error},
     )
 
 
