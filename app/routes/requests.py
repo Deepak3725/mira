@@ -32,9 +32,10 @@ from ..db import (
     list_requests_for_user,
     mark_all_notifications_read,
     mark_notification_read,
+    valid_row_id,
 )
 from ..intent import interpret_need
-from ..matching import find_providers
+from ..matching import find_providers, provider_summary_for_peer
 from ..request_parse import CATEGORIES, parse_need
 from .accounts import current_user
 
@@ -376,6 +377,8 @@ def request_detail(request: Request, req_id: int, notice: str = ""):
         match_items = []
         for m in list_matches_for_search(conn, req["id"]):
             peer_name, peer_twin, peer_link = "", "", ""
+            counter_text: str = ""
+            counter_facts: dict = {}
             if m["counterpart_type"] == "opportunity":
                 opp = get_opportunity(conn, m["counterpart_id"])
                 if opp is not None:
@@ -393,6 +396,14 @@ def request_detail(request: Request, req_id: int, notice: str = ""):
                     peer_twin = other["twin_name"]
                     counter_title = need_engine.request_title(
                         other["need_text"])
+                    # Need counterparts have no public details page, so
+                    # the shared-safe summary renders inline -- exactly
+                    # what /discover shows for the same post (budget
+                    # ceiling stripped), and nothing once withdrawn.
+                    if need_engine.is_shared(other):
+                        counter_text = other["need_text"]
+                        counter_facts = provider_summary_for_peer(
+                            need_engine.request_requirements(other))
                 else:
                     counter_title = "(removed need)"
             try:
@@ -410,6 +421,8 @@ def request_detail(request: Request, req_id: int, notice: str = ""):
                 "counterpart_type": m["counterpart_type"],
                 "counter_title": counter_title, "peer_name": peer_name,
                 "peer_twin": peer_twin, "peer_link": peer_link,
+                "counter_text": counter_text,
+                "counter_facts": counter_facts,
             })
         view = {
             "id": req["id"], "category": req["category"], "status": req["status"],
@@ -681,6 +694,23 @@ def notification_list(request: Request):
          "csrf_token": auth.csrf_for_request(request, me["id"])})
 
 
+def _notif_id_or_none(raw: str) -> int | None:
+    """Parse a notification id form value (None when unusable).
+
+    Crafted values (huge digit strings, unicode digits, negatives)
+    stay on the notifications page instead of raising a driver
+    binding error (HTTP 500).
+    """
+    text = (raw or "").strip()
+    if not text.isdigit():
+        return None
+    try:
+        nid = int(text)
+    except ValueError:  # absurdly long digit strings
+        return None
+    return nid if valid_row_id(nid) else None
+
+
 @router.post("/notifications/read")
 def notification_read(request: Request, notif_id: str = Form(""),
                       csrf_token: str = Form("")):
@@ -693,16 +723,19 @@ def notification_read(request: Request, notif_id: str = Form(""),
     try:
         if notif_id.strip() == "all":
             mark_all_notifications_read(conn, me["id"])
-        elif notif_id.strip().isdigit():
-            mark_notification_read(conn, int(notif_id), me["id"])
-            # Reading one notification takes the user to what it is
-            # about (the match view with Accept/Reject), when the link
-            # is a safe same-site path.
-            for note in list_notifications(conn, me["id"]):
-                if note["id"] == int(notif_id) \
-                        and (note["link"] or "").startswith("/"):
-                    target = note["link"]
-                    break
+        else:
+            nid = _notif_id_or_none(notif_id)
+            if nid is not None:
+                mark_notification_read(conn, nid, me["id"])
+                # Reading one notification takes the user to what it
+                # is about (the match view with Accept/Reject), when
+                # the link is a safe same-site path.
+                for note in list_notifications(conn, me["id"]):
+                    link = note["link"] or ""
+                    if note["id"] == nid and link.startswith("/") \
+                            and not link.startswith("//"):
+                        target = link
+                        break
         conn.commit()
     finally:
         conn.close()

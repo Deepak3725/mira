@@ -1092,3 +1092,56 @@ details > summary {
   .chat-form { grid-template-columns: 1fr; }
   .bubble { max-width: 95%; }
 }
+
+/* Structured Find Something search: type tabs + panels. Radio inputs
+   drive visibility with CSS only, so every form still works with
+   scripts disabled (all panels simply stack). */
+.search-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  margin-bottom: 1.4rem;
+  background: var(--mint-soft);
+}
+
+.search-tabs { display: grid; gap: 0.8rem; }
+
+.tab-radio {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.tab-labels { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.tab-labels label {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.45rem 1.1rem;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--teal-ink);
+  background: #fff;
+}
+
+.tab-panel { display: none; }
+
+#stab-job:checked ~ #panel-job,
+#stab-taxi:checked ~ #panel-taxi,
+#stab-other:checked ~ #panel-other { display: block; }
+
+#stab-job:checked ~ .tab-labels label[for="stab-job"],
+#stab-taxi:checked ~ .tab-labels label[for="stab-taxi"],
+#stab-other:checked ~ .tab-labels label[for="stab-other"] {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+
+.tab-radio:focus-visible ~ .tab-labels label {
+  outline: 2px solid var(--teal-deep);
+  outline-offset: 2px;
+}
+
+.search-panel .discover-form { margin: 0; }

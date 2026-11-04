@@ -10,6 +10,7 @@ from .. import auth
 from .. import findchat
 from .. import matcher
 from .. import posting
+from ..avatars import avatar_svg
 from ..config import settings
 from ..db import (
     add_twin_skills,
@@ -20,7 +21,11 @@ from ..db import (
     list_twin_chats,
     twin_profile,
 )
+from ..matching import find_jobs_by_title, find_other, find_taxi_rides
 from .accounts import current_user
+
+#: Structured search types on Find Something (GET query value).
+SEARCH_TYPES = ("job", "taxi", "other")
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -53,15 +58,48 @@ def _render_find(request: Request, me: dict, messages: list,
                  cards: dict, *, error: str = "",
                  draft: str = "", twin_name: str,
                  twin_skills: list | None = None,
-                 notice: str = ""):
+                 notice: str = "", search: dict | None = None):
     return templates.TemplateResponse(
         request, "find.html",
         {"app_name": settings.app_name, "me": me,
          "messages": [dict(m) for m in messages if m["role"] != "system"], "cards": cards,
          "error": error, "draft": draft, "twin_name": twin_name,
          "twin_skills": twin_skills or [], "notice": notice,
+         "search": search or {"type": "job", "did_search": False},
          "csrf_token": auth.csrf_for_request(request, me["id"])},
         status_code=400 if error else 200)
+
+
+def _run_structured_search(conn, twin, search_type: str,
+                           title: str, origin: str, destination: str,
+                           query: str, location: str) -> dict:
+    """One immediate structured search (read-only, no side effects).
+
+    Searches real stored posts through the existing deterministic
+    rules; never writes to the twin, never notifies, never invents.
+    """
+    title = (title or "").strip()[:200]
+    origin = (origin or "").strip()[:120]
+    destination = (destination or "").strip()[:120]
+    query = (query or "").strip()[:500]
+    location = (location or "").strip()[:120]
+    base = {"type": search_type, "did_search": True, "results": [],
+            "error": "", "title": title, "origin": origin,
+            "destination": destination, "q": query, "location": location}
+    if search_type == "job":
+        if len(title) < 2:
+            return dict(base, error="Enter a job title to search for.")
+        return dict(base, results=find_jobs_by_title(
+            conn, twin, title, location=location or None))
+    if search_type == "taxi":
+        if not origin and not destination:
+            return dict(base, error="Enter where you are going from"
+                                    " and/or going to.")
+        return dict(base, results=find_taxi_rides(
+            conn, twin, origin, destination))
+    if len(query) < 2:
+        return dict(base, error="Describe what you are looking for.")
+    return dict(base, results=find_other(conn, twin, query))
 
 
 def _twin_skill_list(conn, twin_id: int) -> list[str]:
@@ -75,7 +113,9 @@ def _twin_skill_list(conn, twin_id: int) -> list[str]:
 
 
 @router.get("/find", response_class=HTMLResponse)
-def find_page(request: Request, notice: str = ""):
+def find_page(request: Request, notice: str = "",
+              type: str = "", title: str = "", origin: str = "",
+              destination: str = "", q: str = "", location: str = ""):
     me, redir = _me_or_login(request)
     if redir:
         return redir
@@ -86,11 +126,22 @@ def find_page(request: Request, notice: str = ""):
             return RedirectResponse(url="/twin/new", status_code=303)
         messages = list_twin_chats(conn, me["id"])
         cards = _chat_cards(conn, messages)
+        search: dict | None = None
+        picked = (type or "").strip().lower()
+        if picked in SEARCH_TYPES:
+            search = _run_structured_search(
+                conn, twin, picked, title, origin, destination, q,
+                location)
+            for item in search.get("results", []):
+                seed = (item.get("owner") or {}).get("twin_avatar_seed")
+                item["owner_svg"] = avatar_svg(seed or "mira-fallback")
+        elif type:
+            search = {"type": "job", "did_search": False}
         return _render_find(
             request, me, messages, cards,
             twin_name=twin["display_name"],
             twin_skills=_twin_skill_list(conn, twin["id"]),
-            notice=notice)
+            notice=notice, search=search)
     finally:
         conn.close()
 

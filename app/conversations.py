@@ -18,7 +18,13 @@ from typing import Any
 from . import budget, privacy
 from . import requests as need_engine
 from .budget import BudgetExhausted
-from .db import get_opportunity, get_request, get_twin, insert_returning_id
+from .db import (
+    get_opportunity,
+    get_request,
+    get_twin,
+    insert_returning_id,
+    valid_row_id,
+)
 from .meta_client import MetaAPIError, MetaNotConfigured
 
 
@@ -186,6 +192,8 @@ def get_or_create_request_conversation(
 
 
 def get_conversation(conn: Connection, conv_id: int) -> Row | None:
+    if not valid_row_id(conv_id):
+        return None
     return conn.execute(
         "SELECT c.*, ta.display_name AS name_a, ta.avatar_seed AS seed_a,"
         " tb.display_name AS name_b, tb.avatar_seed AS seed_b,"

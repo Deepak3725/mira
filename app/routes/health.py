@@ -5,16 +5,21 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from ..config import settings
-from ..db import db_path, get_connection, init_db
+from ..db import get_connection
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/healthz")
 def healthz() -> dict:
-    """Report app status and database writability (never exposes secrets)."""
+    """Report app status with one cheap query (never exposes secrets).
+
+    Schema setup runs once at boot (see lifespan in app.main); the
+    check itself stays a single round trip so a slow database cannot
+    push Render's 5-second health check into a timeout. An
+    unreachable database still reports degraded, never ok.
+    """
     try:
-        init_db()
         conn = get_connection()
         try:
             row = conn.execute(

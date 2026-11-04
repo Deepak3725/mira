@@ -88,7 +88,7 @@
         {% if item.need.requirements %}
         <ul class="skill-chips">
           {% for key, value in item.need.requirements.items() %}
-          <li>{{ key }}: {% if value is string or value is number %}{{ value }}{% else %}{{ value | join(', ') }}{% endif %}</li>
+          <li>{{ key }}: {% if value is string or value is number %}{{ value }}{% elif value is iterable %}{{ value | join(', ') }}{% endif %}</li>
           {% endfor %}
         </ul>
         {% endif %}

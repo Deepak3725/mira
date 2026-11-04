@@ -16,7 +16,7 @@
   {% if req.requirements %}
   <ul class="skill-chips">
     {% for key, value in req.requirements.items() %}
-    <li>{{ key }}: {% if value is string or value is number %}{{ value }}{% else %}{{ value | join(', ') }}{% endif %}</li>
+    <li>{{ key }}: {% if value is string or value is number %}{{ value }}{% elif value is iterable %}{{ value | join(', ') }}{% endif %}</li>
     {% endfor %}
   </ul>
   {% endif %}
@@ -36,6 +36,14 @@
         <span>· {{ m.peer_twin }} ({{ m.peer_name }})</span>
       </p>
       <p class="lede">{{ m.reason }}</p>
+      {% if m.counter_text %}<p class="lede">{{ m.counter_text }}</p>{% endif %}
+      {% if m.counter_facts %}
+      <ul class="skill-chips">
+        {% for key, value in m.counter_facts.items() %}
+        <li>{{ key }}: {% if value is string or value is number %}{{ value }}{% elif value is iterable %}{{ value | join(', ') }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
       <p class="lede">me: {% if m.owner_accepted %}accepted{% else %}undecided{% endif %} · them: {% if m.peer_accepted %}interested{% else %}undecided{% endif %}</p>
       {% if m.accept_message %}<p class="lede">Their message: “{{ m.accept_message }}”</p>{% endif %}
       {% if m.mutual and m.contact %}

@@ -487,16 +487,22 @@ def opportunity_detail(
         twin = own if (own is not None and twin_id == own["id"]) else None
         match = None
         selected = None
+        # One guarded parse for every use below: corrupt or non-list
+        # stored skills degrade to "no specific skills" instead of a
+        # 500 on this notification-click target.
+        try:
+            required_skills = json.loads(
+                opp["required_skills_json"] or "[]")
+        except (ValueError, TypeError):
+            required_skills = []
+        if not isinstance(required_skills, list):
+            required_skills = []
         if twin is not None:
             # Relevance from the authorized view only, own twin only.
             seeker = SeekerProfile.from_profile(twin_public_view(twin))
-            try:
-                required = json.loads(opp["required_skills_json"] or "[]")
-            except (ValueError, TypeError):
-                required = []
             match = score_opportunity(
                 seeker,
-                required_skills=required if isinstance(required, list) else [],
+                required_skills=required_skills,
                 preferred_years=opp["preferred_experience_years"],
                 location=opp["location"],
                 remote_ok=bool(opp["remote_ok"]),
@@ -517,7 +523,7 @@ def opportunity_detail(
             "kind": opp["kind"],
             "title": opp["title"],
             "description": opp["description"],
-            "required_skills": json.loads(opp["required_skills_json"] or "[]"),
+            "required_skills": required_skills,
             "preferred_experience_years": opp["preferred_experience_years"],
             "location": opp["location"],
             "remote_ok": bool(opp["remote_ok"]),
@@ -566,8 +572,7 @@ def opportunity_detail(
             "durations": matcher.SEARCH_DURATIONS,
             "notice": notice,
             "skills_text": ", ".join(
-                s for s in json.loads(opp["required_skills_json"] or "[]")
-                if isinstance(s, str)),
+                s for s in required_skills if isinstance(s, str)),
             "csrf_token": auth.csrf_for_request(
                 request, me["id"] if me else None),
         },

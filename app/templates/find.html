@@ -3,10 +3,179 @@
 {% block content %}
 <section class="page-head narrow">
   <h1>What are you looking for?</h1>
-  <p class="lede">Talk to {{ twin_name }} in words. Your twin searches and tells you what it finds.</p>
+  <p class="lede">Search stored posts directly, or talk to {{ twin_name }} in words below. Your twin searches and tells you what it finds.</p>
 </section>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
 {% if notice %}<p class="form-note" role="status">{{ notice }}</p>{% endif %}
+<section class="search-panel" aria-label="Search stored posts">
+  <div class="search-tabs">
+    <input class="tab-radio" type="radio" name="search-tab" id="stab-job" value="job"{% if search.type != "taxi" and search.type != "other" %} checked{% endif %} />
+    <input class="tab-radio" type="radio" name="search-tab" id="stab-taxi" value="taxi"{% if search.type == "taxi" %} checked{% endif %} />
+    <input class="tab-radio" type="radio" name="search-tab" id="stab-other" value="other"{% if search.type == "other" %} checked{% endif %} />
+    <div class="tab-labels" role="group" aria-label="Search type">
+      <label for="stab-job">Jobs</label>
+      <label for="stab-taxi">Taxi</label>
+      <label for="stab-other">Others</label>
+    </div>
+    <div class="tab-panel" id="panel-job">
+      <form class="discover-form" method="get" action="/find" aria-label="Search jobs">
+        <input type="hidden" name="type" value="job" />
+        <label>
+          Job title
+          <input type="text" name="title" value="{{ search.title or '' }}" maxlength="200" required placeholder="e.g. software developer, electrician, driver" />
+        </label>
+        <label>
+          Location (optional)
+          <input type="text" name="location" value="{{ search.location or '' }}" maxlength="120" placeholder="e.g. Thimphu or remote" />
+        </label>
+        <button class="button" type="submit">Search jobs</button>
+      </form>
+    </div>
+    <div class="tab-panel" id="panel-taxi">
+      <form class="discover-form" method="get" action="/find" aria-label="Search taxi rides">
+        <input type="hidden" name="type" value="taxi" />
+        <label>
+          Going from
+          <input type="text" name="origin" value="{{ search.origin or '' }}" maxlength="120" placeholder="e.g. Thimphu" />
+        </label>
+        <label>
+          Going to
+          <input type="text" name="destination" value="{{ search.destination or '' }}" maxlength="120" placeholder="e.g. Paro" />
+        </label>
+        <button class="button" type="submit">Search rides</button>
+      </form>
+    </div>
+    <div class="tab-panel" id="panel-other">
+      <form class="discover-form" method="get" action="/find" aria-label="Search other posts">
+        <input type="hidden" name="type" value="other" />
+        <label>
+          What are you looking for?
+          <input type="text" name="q" value="{{ search.q or '' }}" maxlength="500" required placeholder="e.g. graphic design, tutoring, plumbing" />
+        </label>
+        <button class="button" type="submit">Search</button>
+      </form>
+    </div>
+  </div>
+  {% if search.error %}<p class="form-error" role="alert">{{ search.error }}</p>{% endif %}
+</section>
+{% if search.did_search and not search.error %}
+<section class="opp-list" aria-live="polite" aria-label="Search results">
+  {% if search.type == "job" %}
+  <h2>Job results ({{ search.results | length }})</h2>
+  <p class="lede">Stored job posts matching that title, ranked by deterministic rules; scores are rough fit indicators, not success predictions.</p>
+  {% if search.results %}
+    {% for item in search.results %}
+    <article class="opp-card">
+      <div class="twin-avatar small" aria-hidden="true">{{ item.owner_svg | safe }}</div>
+      <div class="opp-info">
+        <h2><a href="/opportunities/{{ item.opportunity.id }}">{{ item.opportunity.title }}</a></h2>
+        <p class="opp-meta">
+          <span class="badge">{{ item.opportunity.kind }}</span>
+          <span class="score" title="Rough fit indicator for your twin, not a success prediction">Match {{ item.match.score }}/100</span>
+          <span>by {{ item.owner.twin_display_name }} ({{ item.owner.name }})</span>
+        </p>
+        <p>{{ item.match.explanation }}</p>
+        {% if item.match.matching_skills %}
+        <ul class="skill-chips">
+          {% for skill in item.match.matching_skills %}
+          <li class="hit">{{ skill }}</li>
+          {% endfor %}
+          {% for skill in item.match.missing_skills %}
+          <li class="miss">{{ skill }}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  {% else %}
+  <div class="empty-state">
+    <img src="/static/img/empty-search.svg" alt="" />
+    <h2>No jobs match that title</h2>
+    <p>Try a shorter title or a different location. New posts appear here as soon as they are published.</p>
+  </div>
+  {% endif %}
+  {% elif search.type == "taxi" %}
+  <h2>Ride results ({{ search.results | length }})</h2>
+  <p class="lede">Stored taxi posts covering that route. Contact happens through twin chat or match decisions — no private contact details are shown here.</p>
+  {% if search.results %}
+    {% for item in search.results %}
+    <article class="opp-card">
+      <div class="twin-avatar small" aria-hidden="true">{{ item.owner_svg | safe }}</div>
+      <div class="opp-info">
+        {% if item.kind == "offer" %}
+        <h2><a href="/opportunities/{{ item.id }}">{{ item.title }}</a></h2>
+        {% else %}
+        <h2>{{ item.title }}</h2>
+        {% endif %}
+        <p class="opp-meta">
+          <span class="badge">{{ item.kind }}</span>
+          <span class="badge">{{ item.category }}</span>
+          <span>by {{ item.owner.twin_display_name }} ({{ item.owner.name }})</span>
+        </p>
+        <p>{{ item.text }}</p>
+        {% if item.route.origin or item.route.destination or item.when %}
+        <ul class="skill-chips">
+          {% if item.route.origin %}<li>from {{ item.route.origin }}</li>{% endif %}
+          {% if item.route.destination %}<li>to {{ item.route.destination }}</li>{% endif %}
+          {% if item.when %}<li>{{ item.when }}</li>{% endif %}
+        </ul>
+        {% endif %}
+        <p class="lede">{{ item.explanation }}</p>
+        {% if item.kind == "need" %}
+        <form method="post" action="/discover/needs/{{ item.id }}/contact"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <button class="button" type="submit">Have {{ twin_name }} answer {{ item.owner.twin_display_name }}</button>
+        </form>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  {% else %}
+  <div class="empty-state">
+    <img src="/static/img/empty-search.svg" alt="" />
+    <h2>No rides cover that route</h2>
+    <p>Try one endpoint only, or post your trip so drivers can find you.</p>
+    <p><a class="button secondary" href="/post">Post Something</a></p>
+  </div>
+  {% endif %}
+  {% else %}
+  <h2>Results ({{ search.results | length }})</h2>
+  <p class="lede">Stored posts relevant to that description. Contact happens through twin chat or match decisions — no private contact details are shown here.</p>
+  {% if search.results %}
+    {% for item in search.results %}
+    <article class="opp-card">
+      <div class="twin-avatar small" aria-hidden="true">{{ item.owner_svg | safe }}</div>
+      <div class="opp-info">
+        {% if item.kind == "offer" %}
+        <h2><a href="/opportunities/{{ item.id }}">{{ item.title }}</a></h2>
+        {% else %}
+        <h2>{{ item.title }}</h2>
+        {% endif %}
+        <p class="opp-meta">
+          <span class="badge">{{ item.kind }}</span>
+          <span class="badge">{{ item.category }}</span>
+          <span>by {{ item.owner.twin_display_name }} ({{ item.owner.name }})</span>
+        </p>
+        <p>{{ item.text }}</p>
+        <p class="lede">{{ item.explanation }}</p>
+        {% if item.kind == "need" %}
+        <form method="post" action="/discover/needs/{{ item.id }}/contact"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <button class="button" type="submit">Have {{ twin_name }} answer {{ item.owner.twin_display_name }}</button>
+        </form>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  {% else %}
+  <div class="empty-state">
+    <img src="/static/img/empty-search.svg" alt="" />
+    <h2>Nothing matches that description</h2>
+    <p>Try fewer or simpler words, or describe it to your twin below so it keeps looking.</p>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
 <section class="skills-bar" aria-label="Your skills">
   {% if twin_skills %}
   <ul class="skill-chips">

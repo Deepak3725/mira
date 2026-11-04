@@ -613,3 +613,315 @@ def find_needs(
         )
     results.sort(key=lambda r: (-r["match"].score, r["need"]["id"]))
     return results[: max(0, limit)]
+
+
+# ---------------------------------------------------------------------------
+# Structured Find Something searches (Jobs / Taxi / Others). Deterministic,
+# zero AI, real stored records only. Each helper reuses the existing
+# primitives above (scoring, keywords, endpoint parsing, expiry rules):
+# no new matching engine, no new data sources.
+# ---------------------------------------------------------------------------
+
+def _title_words(text: Any) -> list[str]:
+    import re as _re
+
+    return [w for w in _re.findall(r"[a-z0-9]+", str(text or "").lower())
+            if len(w) >= 2]
+
+
+def _endpoint_set(*values: Any) -> set[str]:
+    return {_norm(v) for v in values} - {""}
+
+
+def _post_endpoints(requirements: dict, text: str) -> set[str]:
+    """Endpoint places for one post: stored slots plus parsed text."""
+    from .request_parse import parse_places as _parse_places
+
+    found = _endpoint_set(requirements.get("origin"),
+                          requirements.get("destination"))
+    origin, destination = _parse_places(text or "")
+    return found | _endpoint_set(origin, destination)
+
+
+def _is_job_offer(opp: Row) -> bool:
+    return _norm(opp["kind"]) == "job" or _norm(opp["category"]) == "job"
+
+
+def _is_taxi_post(category: str) -> bool:
+    return _norm(category) in ("transport", "", "other")
+
+
+def find_jobs_by_title(
+    conn: Connection,
+    twin: Row,
+    title: str,
+    *,
+    location: str | None = None,
+    limit: int = 20,
+    candidate_cap: int = 200,
+) -> list[dict[str, Any]]:
+    """Stored job offers matching a title, ranked for the viewer's own twin.
+
+    Case-insensitive word matching: every query word must appear in the
+    title (strong) or in the title plus description (weak). Survivors
+    rank by title strength, then by the existing skills/experience/
+    location fit for the twin's authorized public view. Own posts and
+    expired offers never appear. No twin data is modified.
+    """
+    seeker = SeekerProfile.from_profile(privacy.twin_public_view(twin))
+    words = _title_words(title)
+    if not words:
+        return []
+    loc_filter = _norm(location)
+    now = _now_stamp()
+    results: list[dict[str, Any]] = []
+    for opp in list_opportunities(conn, status="open",
+                                  limit=candidate_cap):
+        if opp["owner_user_id"] == twin["user_id"]:
+            continue
+        if not _is_job_offer(opp):
+            continue
+        if offer_expired(opp, now):
+            continue
+        if loc_filter:
+            if loc_filter == "remote":
+                if not opp["remote_ok"]:
+                    continue
+            elif loc_filter not in _norm(opp["location"]):
+                continue
+        title_text = str(opp["title"] or "").lower()
+        full_text = title_text + " " + str(opp["description"] or "").lower()
+        if all(w in title_text for w in words):
+            strength = 0
+        elif all(w in full_text for w in words):
+            strength = 1
+        else:
+            continue
+        required = _json_list(opp["required_skills_json"])
+        match = score_opportunity(
+            seeker,
+            required_skills=required,
+            preferred_years=opp["preferred_experience_years"],
+            location=opp["location"],
+            remote_ok=bool(opp["remote_ok"]),
+        )
+        results.append(
+            {
+                "opportunity": {
+                    "id": opp["id"],
+                    "kind": opp["kind"],
+                    "title": opp["title"],
+                    "description": opp["description"],
+                    "required_skills": required,
+                    "preferred_experience_years":
+                        opp["preferred_experience_years"],
+                    "location": opp["location"],
+                    "remote_ok": bool(opp["remote_ok"]),
+                    "status": opp["status"],
+                },
+                "owner": {
+                    "name": opp["owner_name"],
+                    "role": opp["owner_role"],
+                    "twin_display_name": opp["owner_twin_name"],
+                    "twin_avatar_seed": opp["owner_avatar_seed"],
+                },
+                "match": match,
+                "title_hit": "title" if strength == 0 else "details",
+            }
+        )
+    results.sort(key=lambda r: (
+        0 if r["title_hit"] == "title" else 1,
+        -r["match"].score, r["opportunity"]["id"]))
+    return results[: max(0, limit)]
+
+
+def _need_search_item(req: Row, explanation: str,
+                      route: dict[str, str], when: str) -> dict[str, Any]:
+    from .requests import request_title
+
+    return {
+        "kind": "need",
+        "id": req["id"],
+        "title": request_title(req["need_text"]),
+        "text": req["need_text"],
+        "category": req["category"],
+        "status": req["status"],
+        "route": route,
+        "when": when,
+        "owner": {
+            "name": req["owner_name"],
+            "twin_display_name": req["twin_name"],
+            "twin_avatar_seed": req["twin_avatar_seed"],
+        },
+        "explanation": explanation,
+    }
+
+
+def _offer_search_item(opp: Row, explanation: str,
+                       route: dict[str, str], when: str) -> dict[str, Any]:
+    return {
+        "kind": "offer",
+        "id": opp["id"],
+        "title": opp["title"],
+        "text": opp["description"],
+        "category": opp["category"] or opp["kind"],
+        "status": opp["status"],
+        "route": route,
+        "when": when,
+        "owner": {
+            "name": opp["owner_name"],
+            "twin_display_name": opp["owner_twin_name"],
+            "twin_avatar_seed": opp["owner_avatar_seed"],
+        },
+        "explanation": explanation,
+    }
+
+
+def find_taxi_rides(
+    conn: Connection,
+    twin: Row,
+    origin: str,
+    destination: str,
+    *,
+    limit: int = 20,
+    candidate_cap: int = 200,
+) -> list[dict[str, Any]]:
+    """Stored taxi posts covering a route (origin and/or destination).
+
+    Candidates are transport-category offers and shared needs (plus
+    uncategorized posts with parseable endpoints); a post matches when
+    at least one queried endpoint overlaps its route, using the same
+    normalization and endpoint parsing as automatic matching. Own
+    posts and expired offers never appear. Ranked by overlap, then id.
+    """
+    from .db import list_opportunities, list_shared_requests
+
+    wanted = _endpoint_set(origin, destination)
+    if not wanted:
+        return []
+    now = _now_stamp()
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for opp in list_opportunities(conn, status="open",
+                                  limit=candidate_cap):
+        if opp["owner_user_id"] == twin["user_id"]:
+            continue
+        if not _is_taxi_post(opp["category"] or ""):
+            continue
+        if offer_expired(opp, now):
+            continue
+        endpoints = _post_endpoints(
+            {}, f"{opp['title']} {opp['description']} {opp['location']}")
+        overlap = wanted & endpoints
+        if not overlap:
+            continue
+        scored.append((len(overlap), opp["id"], _offer_search_item(
+            opp, "Same route: " + ", ".join(sorted(overlap)),
+            {"origin": "", "destination": ""}, "")))
+    for req in list_shared_requests(conn,
+                                    exclude_user_id=twin["user_id"],
+                                    limit=candidate_cap):
+        if not _is_taxi_post(req["category"] or ""):
+            continue
+        requirements = _as_dict(req["requirements_json"])
+        endpoints = _post_endpoints(requirements, req["need_text"])
+        overlap = wanted & endpoints
+        if not overlap:
+            continue
+        scored.append((len(overlap), -req["id"], _need_search_item(
+            req, "Same route: " + ", ".join(sorted(overlap)),
+            {"origin": str(requirements.get("origin") or ""),
+             "destination": str(requirements.get("destination") or "")},
+            str(requirements.get("when_text") or ""))))
+    scored.sort(key=lambda entry: (-entry[0], entry[1]))
+    return [item for _, _, item in scored[: max(0, limit)]]
+
+
+def find_other(
+    conn: Connection,
+    twin: Row,
+    query: str,
+    *,
+    limit: int = 20,
+    candidate_cap: int = 200,
+) -> list[dict[str, Any]]:
+    """Stored offers/needs relevant to a free-text description.
+
+    Existing signals only: keyword overlap with the post text, skill
+    overlap with the twin's authorized skills, and route overlap with
+    places parsed from the query. A post matches on any signal; more
+    shared words rank first, then skill/route hits, then id. Own posts
+    and expired offers never appear. No twin data is modified.
+    """
+    from .db import list_opportunities, list_shared_requests
+    from .request_parse import parse_need as _parse_need
+
+    query_words = _keywords(query)
+    parsed = _parse_need(query or "")
+    parsed_reqs = parsed.get("requirements", {}) or {}
+    wanted_places = _endpoint_set(parsed_reqs.get("origin"),
+                                  parsed_reqs.get("destination"))
+    wanted_skills = {_norm(s) for s in _str_list(parsed_reqs.get("skills"))}
+    seeker = SeekerProfile.from_profile(privacy.twin_public_view(twin))
+    have_skills = seeker.normalized_skills()
+    if not query_words and not wanted_places and not wanted_skills:
+        return []
+    now = _now_stamp()
+    scored: list[tuple[int, int, int, dict[str, Any]]] = []
+    for opp in list_opportunities(conn, status="open",
+                                  limit=candidate_cap):
+        if opp["owner_user_id"] == twin["user_id"]:
+            continue
+        if offer_expired(opp, now):
+            continue
+        overlap = query_words & _offering_words(opp)
+        post_skills = {_norm(s) for s in _json_list(
+            opp["required_skills_json"])}
+        skill_hit = bool((wanted_skills | have_skills) & post_skills)
+        route_hit = bool(
+            wanted_places & _post_endpoints(
+                {}, f"{opp['title']} {opp['description']}"
+                f" {opp['location']}"))
+        if not overlap and not skill_hit and not route_hit:
+            continue
+        notes = []
+        if overlap:
+            notes.append("Shares: " + ", ".join(sorted(overlap)[:5]))
+        if skill_hit:
+            notes.append("shares a skill with your search")
+        if route_hit:
+            notes.append("same route as your search")
+        scored.append((len(overlap), int(skill_hit) + int(route_hit),
+                       opp["id"], _offer_search_item(
+                           opp, "; ".join(notes), {"origin": "", "destination": ""}, "")))
+    for req in list_shared_requests(conn,
+                                    exclude_user_id=twin["user_id"],
+                                    limit=candidate_cap):
+        requirements = _as_dict(req["requirements_json"])
+        need_words = _keywords(req["need_text"])
+        for skill in _str_list(requirements.get("skills")):
+            need_words |= _keywords(skill)
+        overlap = query_words & need_words
+        post_skills = {_norm(s) for s in
+                       _str_list(requirements.get("skills"))}
+        skill_hit = bool((wanted_skills | have_skills) & post_skills)
+        route_hit = bool(
+            wanted_places & _post_endpoints(requirements,
+                                            req["need_text"]))
+        if not overlap and not skill_hit and not route_hit:
+            continue
+        notes = []
+        if overlap:
+            notes.append("Shares: " + ", ".join(sorted(overlap)[:5]))
+        if skill_hit:
+            notes.append("shares a skill with your search")
+        if route_hit:
+            notes.append("same route as your search")
+        scored.append((len(overlap), int(skill_hit) + int(route_hit),
+                       -req["id"], _need_search_item(
+                           req, "; ".join(notes),
+                           {"origin": str(requirements.get("origin") or ""),
+                            "destination": str(
+                                requirements.get("destination") or "")},
+                           str(requirements.get("when_text") or ""))))
+    scored.sort(key=lambda entry: (-entry[0], -entry[1], entry[2]))
+    return [item for _, _, _, item in scored[: max(0, limit)]]

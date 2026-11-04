@@ -200,7 +200,17 @@ async def _http_errors(request: Request, exc: HTTPException) -> HTMLResponse:
 
 @app.exception_handler(Exception)
 async def _uncaught_errors(request: Request, exc: Exception) -> HTMLResponse:
-    # Never leak tracebacks or internals to the browser.
+    # Never leak tracebacks or internals to the browser; do record a
+    # redacted diagnostic server-side so production 500s stay
+    # attributable (method/path/type plus a bounded traceback tail).
+    import traceback as _traceback
+
+    get_logger().error(
+        "unhandled error",
+        extra={"method": request.method, "path": request.url.path,
+               "error_type": type(exc).__name__, "error": str(exc)[:500],
+               "traceback": _traceback.format_exc(limit=8)[-4000:]},
+    )
     return _error_page(500, "Something went wrong")
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

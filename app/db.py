@@ -128,6 +128,16 @@ def _integrity_errors():
 #: either driver. Tests asserting constraint behavior use this.
 INTEGRITY_ERRORS = _integrity_errors()
 
+#: int64 ceiling both drivers can bind (SQLite INTEGER, PG bigint).
+#: Row-id getters reject anything outside it so crafted URL/form ids
+#: 404 instead of raising a driver binding error (HTTP 500).
+MAX_ROW_ID = 2 ** 63 - 1
+
+
+def valid_row_id(value) -> bool:
+    """True when value is a plausible row id on either driver."""
+    return isinstance(value, int) and 0 < value <= MAX_ROW_ID
+
 
 def driver_name(conn) -> str:
     """'postgres' for pooled connections, 'sqlite' otherwise."""
@@ -534,6 +544,8 @@ def list_twins(conn: Connection) -> list[Row]:
 
 
 def get_twin(conn: Connection, twin_id: int) -> Row | None:
+    if not valid_row_id(twin_id):
+        return None
     return conn.execute(
         "SELECT twins.*, users.name AS owner_name, users.role AS owner_role,"
         " users.email AS owner_email"
@@ -592,6 +604,8 @@ def create_opportunity(
 
 
 def get_opportunity(conn: Connection, opp_id: int) -> Row | None:
+    if not valid_row_id(opp_id):
+        return None
     return conn.execute(_OPP_SELECT + " WHERE opportunities.id = ?", (opp_id,)).fetchone()
 
 
@@ -681,6 +695,8 @@ def create_request(
 
 
 def get_request(conn: Connection, req_id: int) -> Row | None:
+    if not valid_row_id(req_id):
+        return None
     return conn.execute(
         "SELECT requests.*, twins.display_name AS twin_name,"
         " users.name AS owner_name FROM requests"
@@ -753,6 +769,8 @@ def list_active_searches(conn: Connection, limit: int = 500) -> list[Row]:
 
 
 def get_match(conn: Connection, match_id: int) -> Row | None:
+    if not valid_row_id(match_id):
+        return None
     return conn.execute(
         "SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
 
